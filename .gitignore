@@ -1,0 +1,59 @@
+# --------------------------
+# Environment
+# --------------------------
+.env
+.env.*
+!.env.example
+
+# --------------------------
+# Dependencies
+# --------------------------
+node_modules/
+
+# --------------------------
+# Build / tooling output
+# --------------------------
+build/
+dist/
+coverage/
+.react-router/
+.vite/
+.cache/
+*.tsbuildinfo
+.eslintcache
+
+# --------------------------
+# Vercel
+# --------------------------
+.vercel/
+
+# --------------------------
+# Logs
+# --------------------------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --------------------------
+# OS / Editor junk
+# --------------------------
+.DS_Store
+Thumbs.db
+.idea/
+
+# deps / builds
+**/node_modules/
+**/build/
+**/dist/
+**/.vercel/
+**/.vite/
+
+# tests / artifacts
+**/.vitest/
+**/coverage/
+
+# temp files
+**/tmp_*.cjs
+**/*.log
