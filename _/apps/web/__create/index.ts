@@ -126,9 +126,9 @@ for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const) {
 
 const app = new Hono();
 
-app.use('*', requestId());
+app.use(requestId());
 
-app.use('*', (c, next) => {
+app.use((c, next) => {
   const requestId = c.get('requestId');
   return als.run({ requestId }, () => next());
 });
@@ -137,8 +137,8 @@ app.use(contextStorage());
 
 // Auth.js (NextAuth v5-style) routes + config
 // Keep /api/auth/token and /api/auth/expo-web-success working as-is (they're custom routes in src/app/api/auth/*).
-app.use('*', initAuthConfig(() => createAuthConfig()));
-app.use('/api/auth/*', async (c, next) => {
+app.use(initAuthConfig(() => createAuthConfig()));
+app.use('/api/auth/:splat{.*}', async (c, next) => {
   const path = c.req.path;
   if (path === '/api/auth/token' || path === '/api/auth/expo-web-success') {
     return next();
@@ -148,7 +148,7 @@ app.use('/api/auth/*', async (c, next) => {
 
 // Populate session for all other API routes (without requiring auth).
 // This allows route handlers to access c.get('authUser') if authenticated.
-app.use('/api/*', async (c, next) => {
+app.use('/api/:splat{.*}', async (c, next) => {
   // Skip auth routes - they're handled above
   if (c.req.path.startsWith('/api/auth/')) {
     return next();
@@ -191,7 +191,6 @@ app.onError((err, c) => {
 
 if (process.env.CORS_ORIGINS) {
   app.use(
-    '*',
     cors({
       origin: process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim()),
     })
@@ -199,7 +198,7 @@ if (process.env.CORS_ORIGINS) {
 }
 for (const method of ['post', 'put', 'patch'] as const) {
   app[method](
-    '*',
+    '/:splat{.*}',
     bodyLimit({
       maxSize: 4.5 * 1024 * 1024, // 4.5mb to match vercel limit
       onError: (c) => {
