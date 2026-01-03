@@ -107,7 +107,7 @@ if ((!process.env.AUTH_URL || process.env.AUTH_URL.length === 0) && process.env.
 }
 
 // Import auth config AFTER env is loaded (src/auth.js reads env at module init time).
-const { createAuthConfig } = await import('../src/auth.js');
+const { createAuthConfig } = (await import('../src/auth.js')) as any;
 
 const als = new AsyncLocalStorage<{ requestId: string }>();
 
@@ -138,7 +138,7 @@ app.use(contextStorage());
 // Auth.js (NextAuth v5-style) routes + config
 // Keep /api/auth/token and /api/auth/expo-web-success working as-is (they're custom routes in src/app/api/auth/*).
 app.use('*', initAuthConfig(() => createAuthConfig()));
-app.use('/api/auth/*', async (c, next) => {
+app.use('/api/auth/:splat*', async (c, next) => {
   const path = c.req.path;
   if (path === '/api/auth/token' || path === '/api/auth/expo-web-success') {
     return next();
@@ -148,7 +148,7 @@ app.use('/api/auth/*', async (c, next) => {
 
 // Populate session for all other API routes (without requiring auth).
 // This allows route handlers to access c.get('authUser') if authenticated.
-app.use('/api/*', async (c, next) => {
+app.use('/api/:splat*', async (c, next) => {
   // Skip auth routes - they're handled above
   if (c.req.path.startsWith('/api/auth/')) {
     return next();
@@ -191,7 +191,7 @@ app.onError((err, c) => {
 
 if (process.env.CORS_ORIGINS) {
   app.use(
-    '/*',
+    '/:splat*',
     cors({
       origin: process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim()),
     })
