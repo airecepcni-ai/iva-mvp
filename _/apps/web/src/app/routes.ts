@@ -79,9 +79,10 @@ function generateRoutes(node: Tree): RouteConfigEntry[] {
 				if (segment.startsWith('[') && segment.endsWith(']')) {
 					const paramName = segment.slice(1, -1);
 
-					// Handle catch-all parameters (e.g., [...ids] becomes *)
+					// Handle catch-all parameters (e.g., [...ids] becomes :paramName*)
 					if (paramName.startsWith('...')) {
-						return '*'; // React Router's catch-all syntax
+						const catchAllName = paramName.slice(3);
+						return `:${catchAllName}*`; // React Router's named catch-all syntax
 					}
 					// Handle optional parameters (e.g., [[id]] becomes :id?)
 					if (paramName.startsWith('[') && paramName.endsWith(']')) {
@@ -113,7 +114,7 @@ if (import.meta.env.DEV) {
 	}
 }
 const tree = buildRouteTree(__dirname);
-const notFound = route('*?', './__create/not-found.tsx');
+const notFound = route(':splat*', './__create/not-found.tsx');
 const routes = [...generateRoutes(tree), notFound];
 
 export default routes;

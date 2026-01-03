@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 export async function loader({ params }: Route.LoaderArgs) {
   const matches = await fg('src/**/page.{js,jsx,ts,tsx}');
   return {
-    path: `/${params['*']}`,
+    path: `/${params.splat || ''}`,
     pages: matches
       .sort((a, b) => a.length - b.length)
       .map((match) => {
