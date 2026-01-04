@@ -11,15 +11,53 @@ import { createAuthConfig } from '../auth';
 
 // Auth.js handler that works with Web Request/Response
 async function handleAuthRequest(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  console.log(`[Auth] ${request.method} ${url.pathname}`);
+  
   const config = createAuthConfig();
+  
+  // Add callbacks for debugging
+  const configWithCallbacks = {
+    ...config,
+    debug: true, // Enable Auth.js debug mode
+    callbacks: {
+      ...config.callbacks,
+      async signIn({ user, account, profile }) {
+        console.log('[Auth Callback] signIn:', { 
+          userId: user?.id, 
+          provider: account?.provider,
+          hasProfile: !!profile 
+        });
+        return true; // Allow sign in
+      },
+      async redirect({ url, baseUrl }) {
+        console.log('[Auth Callback] redirect:', { url, baseUrl });
+        // Handle relative URLs
+        if (url.startsWith('/')) return `${baseUrl}${url}`;
+        // Allow same-origin redirects
+        if (new URL(url).origin === baseUrl) return url;
+        return baseUrl;
+      },
+      async session({ session, user, token }) {
+        console.log('[Auth Callback] session:', { 
+          hasSession: !!session, 
+          hasUser: !!user,
+          hasToken: !!token 
+        });
+        return session;
+      },
+    },
+  };
   
   try {
     // Auth.js core accepts standard Web Request and returns Response
-    const response = await Auth(request, config);
+    const response = await Auth(request, configWithCallbacks);
+    console.log(`[Auth] Response status: ${response.status}`);
     return response;
   } catch (error) {
     console.error('[Auth] Error:', error);
-    return new Response(JSON.stringify({ error: 'Auth error' }), {
+    console.error('[Auth] Error stack:', error instanceof Error ? error.stack : 'no stack');
+    return new Response(JSON.stringify({ error: 'Auth error', message: String(error) }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
