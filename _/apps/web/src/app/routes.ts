@@ -126,6 +126,18 @@ const debugAuthRoute = route('api/debug/auth-config', './api-debug-auth.ts');
 // Test endpoint for adapter
 const testAdapterRoute = route('api/debug/test-adapter', './api-test-adapter.ts');
 
-const routes = [authRoute, debugAuthRoute, testAdapterRoute, ...generateRoutes(tree), notFound];
+// API routes for Vercel deployment (Hono doesn't run on Vercel)
+const businessesRoute = route('api/businesses', './api-businesses.ts');
+const subscriptionRoute = route('api/subscription', './api-subscription.ts');
+
+const routes = [
+  authRoute,
+  debugAuthRoute,
+  testAdapterRoute,
+  businessesRoute,
+  subscriptionRoute,
+  ...generateRoutes(tree),
+  notFound,
+];
 
 export default routes;

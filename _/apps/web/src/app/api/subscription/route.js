@@ -60,6 +60,7 @@ export async function GET() {
     const isSubscribed = mappedBusinesses.some((b) => b.isSubscribed);
 
     return Response.json({
+      ok: true,
       userId,
       isSubscribed,
       businesses: mappedBusinesses.map((b) => ({
