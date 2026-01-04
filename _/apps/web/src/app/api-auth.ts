@@ -2,6 +2,9 @@
  * Auth.js handler as a React Router resource route
  * This handles /api/auth/* requests on Vercel (where Hono doesn't run)
  */
+// IMPORTANT: neon-setup MUST be imported first to configure WebSocket before any DB usage
+import '../../__create/neon-setup';
+
 import { Auth } from '@auth/core';
 import type { LoaderFunctionArgs, ActionFunctionArgs } from 'react-router';
 import { createAuthConfig } from '../auth';
