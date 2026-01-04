@@ -120,6 +120,9 @@ const notFound = route(':splat*', './__create/not-found.tsx');
 // (Hono only runs locally, Vercel needs this explicit route)
 const authRoute = route('api/auth/*', './api-auth.ts');
 
-const routes = [authRoute, ...generateRoutes(tree), notFound];
+// Debug endpoint for auth configuration
+const debugAuthRoute = route('api/debug/auth-config', './api-debug-auth.ts');
+
+const routes = [authRoute, debugAuthRoute, ...generateRoutes(tree), notFound];
 
 export default routes;
