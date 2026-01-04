@@ -1,11 +1,6 @@
 import { getActiveBusinessId } from './tenantId';
-
-const RAW_BACKEND_BASE_URL =
-  import.meta.env.VITE_BACKEND_BASE_URL ??
-  import.meta.env.VITE_IVA_BACKEND_URL ??
-  '';
-
-export const BACKEND_BASE_URL = RAW_BACKEND_BASE_URL.replace(/\/$/, '');
+import { apiFetch } from './apiFetch';
+export { BACKEND_BASE_URL } from '../config/backend';
 
 function ensureLeadingSlash(path: string) {
   return path.startsWith('/') ? path : `/${path}`;
@@ -27,9 +22,6 @@ export function buildBackendUrl(
   params?: Record<string, string | number | boolean | undefined>
 ) {
   const cleanPath = ensureLeadingSlash(path);
-  if (BACKEND_BASE_URL) {
-    return `${BACKEND_BASE_URL}${cleanPath}${serializeParams(params)}`;
-  }
   return `${cleanPath}${serializeParams(params)}`;
 }
 
@@ -104,7 +96,7 @@ export async function fetchBookings(params: {
   });
 
   const t0 = perfNow();
-  const res = await fetch(url.toString(), {
+  const res = await apiFetch(url, {
     headers: {
       'Content-Type': 'application/json',
       'x-tenant-id': resolvedBusinessId,
@@ -137,7 +129,7 @@ export async function createBooking(body: {
   }
 
   const t0 = perfNow();
-  const res = await fetch(buildBackendUrl('/api/vapi/book_appointment'), {
+  const res = await apiFetch('/api/vapi/book_appointment', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -167,7 +159,7 @@ export async function updateBooking(body: {
   }
 
   const t0 = perfNow();
-  const res = await fetch(buildBackendUrl('/api/vapi/update_appointment'), {
+  const res = await apiFetch('/api/vapi/update_appointment', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

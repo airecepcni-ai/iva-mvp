@@ -1,4 +1,14 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "react-router"
-}
+    "$schema": "https://openapi.vercel.sh/vercel.json",
+    "rewrites": [
+      {
+        "source": "/api/auth/:path*",
+        "destination": "/api/auth/:path*"
+      },
+      {
+        "source": "/api/:path*",
+        "destination": "https://iva-backendmvp-production.up.railway.app/:path*"
+      }
+    ]
+  }
+  

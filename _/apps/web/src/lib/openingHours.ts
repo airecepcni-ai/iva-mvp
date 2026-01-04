@@ -23,6 +23,7 @@
  */
 
 import { getActiveBusinessId } from './tenantId';
+import { apiFetch } from './apiFetch';
 import { buildBackendUrl } from './backend';
 
 const __perfLogged = new Set<string>();
@@ -151,7 +152,7 @@ export async function fetchOpeningHours(businessId: string): Promise<OpeningHour
   const url = buildBackendUrl('/api/business_profile');
 
   const t0 = perfNow();
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -193,7 +194,7 @@ export async function updateOpeningHours(
 
   const url = buildBackendUrl('/api/business_profile');
 
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

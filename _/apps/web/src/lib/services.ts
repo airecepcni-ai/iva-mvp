@@ -24,6 +24,7 @@
  */
 
 import { getActiveBusinessId } from './tenantId';
+import { apiFetch } from './apiFetch';
 import { buildBackendUrl } from './backend';
 
 const __perfLogged = new Set<string>();
@@ -125,7 +126,7 @@ export async function fetchServices(businessId: string): Promise<Service[]> {
   const url = buildBackendUrl('/api/business_profile');
 
   const t0 = perfNow();
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -189,7 +190,7 @@ export async function createService(businessId: string, input: ServiceInput): Pr
 
   const url = buildBackendUrl('/api/business_profile');
 
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -274,7 +275,7 @@ export async function updateService(businessId: string, id: string, input: Servi
 
   const url = buildBackendUrl('/api/business_profile');
 
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -348,7 +349,7 @@ export async function saveServicesBulk(businessId: string, updatedServices: Serv
 
   const url = buildBackendUrl('/api/business_profile');
 
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

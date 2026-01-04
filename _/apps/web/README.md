@@ -3,6 +3,7 @@
 ## Vercel deployment
 - **Root directory:** `apps/web`
 - **Framework preset:** `react-router` (see `vercel.json` + `react-router.config.ts` using `@vercel/react-router/vite`)
+- **API rewrite:** Vercel proxies every `/api/:path*` request to `https://iva-backendmvp-production.up.railway.app/:path*`, so the frontend can talk to the backend over the same origin.
 
 ## Required environment variables
 - `AUTH_SECRET`
@@ -13,7 +14,7 @@
 - `DATABASE_URL` or `DB_POOLER_URL` / `AUTH_DB_POOLER_URL`
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
-- `BACKEND_BASE_URL`
+- `BACKEND_BASE_URL` (set to `/api` for the Vercel proxy, or your backend URL when testing outside Vercel)
 - Optional overrides: `VITE_BACKEND_BASE_URL`, `IVA_BACKEND_URL`, `STRIPE_PRICE_TIER*`
 
 ## Stripe webhook

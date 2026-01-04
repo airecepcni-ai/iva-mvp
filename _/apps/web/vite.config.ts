@@ -15,7 +15,7 @@ import { restartEnvFileChange } from './plugins/restartEnvFileChange';
 
 export default defineConfig({
   // Keep them available via import.meta.env.NEXT_PUBLIC_* and VITE_*
-  envPrefix: ['NEXT_PUBLIC_', 'VITE_'],
+  envPrefix: ['NEXT_PUBLIC_', 'VITE_', 'BACKEND_BASE_URL'],
   build: {
     // Enable top-level await support for SSR (Node.js 14.8+)
     target: 'esnext',

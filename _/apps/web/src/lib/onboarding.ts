@@ -1,5 +1,5 @@
 import { getActiveBusinessId } from './tenantId';
-import { buildBackendUrl } from './backend';
+import { apiFetch } from './apiFetch';
 
 // NOTE: Business ID is now passed dynamically to each function.
 // Use the TenantContext (useTenant hook) to get the activeBusinessId.
@@ -24,7 +24,7 @@ export async function importFromWebsite(businessId: string, url: string): Promis
   // trim, basic check
   const finalUrl = url.trim();
 
-  const res = await fetch(buildBackendUrl('/api/onboarding/import_from_web'), {
+  const res = await apiFetch('/api/onboarding/import_from_web', {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

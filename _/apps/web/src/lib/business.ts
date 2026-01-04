@@ -68,6 +68,7 @@
  */
 
 import { getActiveBusinessId } from './tenantId';
+import { apiFetch } from './apiFetch';
 import { buildBackendUrl } from './backend';
 
 const __perfLogged = new Set<string>();
@@ -177,7 +178,7 @@ export async function fetchBusinessSettings(businessId: string): Promise<Busines
   const url = buildBackendUrl('/api/business_profile');
 
   const t0 = perfNow();
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -271,7 +272,7 @@ export async function fetchBusinessSettings(businessId: string): Promise<Busines
     ivaEnabled:
       ivaRaw?.ivaEnabled ??
       ivaRaw?.enabled ??
-      (ivaRaw?.status === "active") ??
+      (ivaRaw?.status ? ivaRaw.status === 'active' : undefined) ??
       ivaEnabled,
   };
 
@@ -297,7 +298,7 @@ export async function updateBusinessProfile(
 
   const url = buildBackendUrl('/api/business_profile');
 
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
