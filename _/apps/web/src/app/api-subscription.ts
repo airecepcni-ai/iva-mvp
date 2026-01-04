@@ -6,6 +6,6 @@ import type { LoaderFunctionArgs } from 'react-router';
 import { GET as getHandler } from './api/subscription/route.js';
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  return getHandler();
+  return getHandler(request);
 }
 

@@ -378,8 +378,60 @@ export function createAuthConfig() {
   }
 }
 
+/**
+ * Get session from a Request object - works in React Router resource routes
+ * This doesn't require Hono context, so it works on Vercel serverless functions
+ */
+export async function getSessionFromRequest(request) {
+  const cookieHeader = request.headers.get('cookie') || '';
+  const cookies = Object.fromEntries(
+    cookieHeader.split(';').map(c => {
+      const [key, ...vals] = c.trim().split('=');
+      return [key, vals.join('=')];
+    }).filter(([k]) => k)
+  );
+  
+  // Auth.js uses different cookie names based on secure/non-secure
+  const isSecure = request.url?.startsWith('https://') || process.env.NODE_ENV === 'production';
+  const cookiePrefix = isSecure ? '__Secure-' : '';
+  const sessionTokenName = `${cookiePrefix}authjs.session-token`;
+  
+  const sessionToken = cookies[sessionTokenName] || cookies['authjs.session-token'];
+  
+  if (!sessionToken) {
+    return null;
+  }
+  
+  try {
+    const result = await adapter.getSessionAndUser(sessionToken);
+    if (!result) {
+      return null;
+    }
+    
+    const { session, user } = result;
+    
+    // Check if session is expired
+    if (session.expires && new Date(session.expires) < new Date()) {
+      return null;
+    }
+    
+    return {
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        image: user.image,
+      },
+      expires: session.expires?.toISOString?.() || session.expires,
+    };
+  } catch (error) {
+    console.error('[getSessionFromRequest] Error:', error);
+    return null;
+  }
+}
+
 // Export auth() function that uses the full config with adapter
-// This is used by API routes to get the session
+// This is used by API routes to get the session (requires Hono context)
 export const { auth } = CreateAuth({
   adapter,
   secret: process.env.AUTH_SECRET,

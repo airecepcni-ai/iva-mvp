@@ -2,11 +2,11 @@
  * GET /api/subscription - Get subscription status for authenticated user
  */
 import sql from "../utils/sql.js";
-import { auth } from "../../../auth.js";
+import { getSessionFromRequest } from "../../../auth.js";
 
-export async function GET() {
+export async function GET(request) {
   try {
-    const session = await auth();
+    const session = await getSessionFromRequest(request);
     if (!session?.user?.id) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }

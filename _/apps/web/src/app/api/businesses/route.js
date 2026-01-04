@@ -3,11 +3,11 @@
  * POST /api/businesses - Create a new business for authenticated user
  */
 import sql from "../utils/sql.js";
-import { auth } from "../../../auth.js";
+import { getSessionFromRequest } from "../../../auth.js";
 
 export async function GET(request) {
   try {
-    const session = await auth();
+    const session = await getSessionFromRequest(request);
     if (!session?.user?.id) {
       return Response.json({ error: "Unauthorized", businesses: [], userId: null }, { status: 401 });
     }
@@ -94,7 +94,7 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    const session = await auth();
+    const session = await getSessionFromRequest(request);
     if (!session?.user?.id) {
       return Response.json({ ok: false, error: "Unauthorized", userId: null }, { status: 401 });
     }
