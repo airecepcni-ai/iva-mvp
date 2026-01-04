@@ -11,9 +11,11 @@ const api = new Hono();
 // NOTE: This file needs to work on Windows in dev.
 // - Avoid resolving paths from import.meta.url (can point to a bundled location).
 // - Normalize path separators when parsing paths.
+// - On Vercel, src/ doesn't exist - only built output. Skip route scanning in production.
 const apiDir = path.resolve(process.cwd(), 'src', 'app', 'api');
 const toPosix = (p: string) => p.replace(/\\/g, '/');
 const apiDirPosix = toPosix(apiDir);
+const isVercelProduction = process.env.VERCEL === '1' && process.env.NODE_ENV === 'production';
 
 if (globalThis.fetch) {
   globalThis.fetch = updatedFetch;
@@ -71,9 +73,18 @@ function getHonoPath(routeFile: string): { name: string; pattern: string }[] {
 
 // Import and register all routes
 async function registerRoutes() {
+  // On Vercel production, src/app/api doesn't exist - skip route scanning
+  // Auth.js routes are registered directly in __create/index.ts, not via file discovery
+  if (isVercelProduction) {
+    return;
+  }
+
   const routeFiles = (
     await findRouteFiles(apiDir).catch((error) => {
-      console.error('Error finding route files:', error);
+      // Silently handle missing directory in production environments
+      if (error.code !== 'ENOENT') {
+        console.error('Error finding route files:', error);
+      }
       return [];
     })
   )
