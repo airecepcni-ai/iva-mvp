@@ -16,47 +16,39 @@ async function handleAuthRequest(request: Request): Promise<Response> {
   
   const config = createAuthConfig();
   
-  // Add callbacks for debugging
-  const configWithCallbacks = {
+  // Enable debug mode and add proper redirect handling
+  const configWithDebug = {
     ...config,
-    debug: true, // Enable Auth.js debug mode
+    debug: process.env.NODE_ENV !== 'production' || true, // Always debug for now
     callbacks: {
-      ...config.callbacks,
-      async signIn({ user, account, profile }) {
-        console.log('[Auth Callback] signIn:', { 
-          userId: user?.id, 
-          provider: account?.provider,
-          hasProfile: !!profile 
-        });
-        return true; // Allow sign in
-      },
-      async redirect({ url, baseUrl }) {
-        console.log('[Auth Callback] redirect:', { url, baseUrl });
+      // Redirect callback - ensure proper URL handling
+      async redirect({ url, baseUrl }: { url: string; baseUrl: string }) {
+        console.log('[Auth] redirect callback:', { url, baseUrl });
         // Handle relative URLs
-        if (url.startsWith('/')) return `${baseUrl}${url}`;
+        if (url.startsWith('/')) {
+          return `${baseUrl}${url}`;
+        }
         // Allow same-origin redirects
-        if (new URL(url).origin === baseUrl) return url;
-        return baseUrl;
-      },
-      async session({ session, user, token }) {
-        console.log('[Auth Callback] session:', { 
-          hasSession: !!session, 
-          hasUser: !!user,
-          hasToken: !!token 
-        });
-        return session;
+        try {
+          const urlOrigin = new URL(url).origin;
+          if (urlOrigin === baseUrl) {
+            return url;
+          }
+        } catch {
+          // Invalid URL, use baseUrl
+        }
+        return `${baseUrl}/dashboard`;
       },
     },
   };
   
   try {
-    // Auth.js core accepts standard Web Request and returns Response
-    const response = await Auth(request, configWithCallbacks);
-    console.log(`[Auth] Response status: ${response.status}`);
+    const response = await Auth(request, configWithDebug);
+    console.log(`[Auth] Response: ${response.status} ${response.headers.get('location') || ''}`);
     return response;
   } catch (error) {
     console.error('[Auth] Error:', error);
-    console.error('[Auth] Error stack:', error instanceof Error ? error.stack : 'no stack');
+    console.error('[Auth] Stack:', error instanceof Error ? error.stack : 'no stack');
     return new Response(JSON.stringify({ error: 'Auth error', message: String(error) }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
