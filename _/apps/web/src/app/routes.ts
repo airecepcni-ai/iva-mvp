@@ -115,6 +115,11 @@ if (import.meta.env.DEV) {
 }
 const tree = buildRouteTree(__dirname);
 const notFound = route(':splat*', './__create/not-found.tsx');
-const routes = [...generateRoutes(tree), notFound];
+
+// Auth.js resource route - handles /api/auth/* on Vercel
+// (Hono only runs locally, Vercel needs this explicit route)
+const authRoute = route('api/auth/*', './api-auth.ts');
+
+const routes = [authRoute, ...generateRoutes(tree), notFound];
 
 export default routes;
