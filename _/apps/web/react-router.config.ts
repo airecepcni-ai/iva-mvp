@@ -1,8 +1,8 @@
 import type { Config } from '@react-router/dev/config';
+import { vercelPreset } from '@vercel/react-router/vite';
 
 export default {
 	appDirectory: './src/app',
-	// Note: We use react-router-hono-server with runtime: 'vercel' instead of vercelPreset()
-	// This allows our Hono API routes (including Auth.js) to work on Vercel
+	presets: [vercelPreset()],
 	ssr: true,
 } satisfies Config;
