@@ -126,6 +126,32 @@ for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const) {
 
 const app = new Hono();
 
+// Debug endpoint to check env vars and auth config (no secrets exposed)
+app.get('/api/debug/auth-status', async (c) => {
+  const hasAuthSecret = !!process.env.AUTH_SECRET && process.env.AUTH_SECRET.length > 0;
+  const hasGoogleClientId = !!process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_ID.length > 0;
+  const hasGoogleClientSecret = !!process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_CLIENT_SECRET.length > 0;
+  const hasDatabaseUrl = !!process.env.DATABASE_URL && process.env.DATABASE_URL.length > 0;
+  const authUrl = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? 'NOT_SET';
+  const trustHost = process.env.AUTH_TRUST_HOST ?? 'NOT_SET';
+  
+  return c.json({
+    ok: true,
+    env: {
+      AUTH_SECRET: hasAuthSecret ? `SET (${process.env.AUTH_SECRET!.length} chars)` : 'MISSING',
+      GOOGLE_CLIENT_ID: hasGoogleClientId ? `SET (ends with ...${process.env.GOOGLE_CLIENT_ID!.slice(-10)})` : 'MISSING',
+      GOOGLE_CLIENT_SECRET: hasGoogleClientSecret ? 'SET' : 'MISSING',
+      DATABASE_URL: hasDatabaseUrl ? 'SET' : 'MISSING',
+      AUTH_URL: authUrl,
+      AUTH_TRUST_HOST: trustHost,
+      NODE_ENV: process.env.NODE_ENV ?? 'NOT_SET',
+    },
+    // @ts-ignore
+    envFilesLoaded: globalThis.__IVA_ENV_FILES__ ?? [],
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.use(requestId());
 
 app.use((c, next) => {
