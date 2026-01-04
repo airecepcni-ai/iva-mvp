@@ -19,7 +19,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   try {
     // Test 1: Check if user exists
     const userResult = await pool.query(
-      'SELECT id, name, email, "emailVerified", image FROM auth_users WHERE email = $1',
+      'SELECT id, name, email, email_verified, image FROM auth_users WHERE email = $1',
       [email]
     );
     const user = userResult.rows[0] || null;
@@ -28,7 +28,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     let accounts: any[] = [];
     if (user) {
       const accountsResult = await pool.query(
-        'SELECT id, "userId", provider, type, "providerAccountId" FROM auth_accounts WHERE "userId" = $1',
+        'SELECT id, user_id, provider, type, provider_account_id FROM auth_accounts WHERE user_id = $1',
         [user.id]
       );
       accounts = accountsResult.rows;
@@ -38,7 +38,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     let sessions: any[] = [];
     if (user) {
       const sessionsResult = await pool.query(
-        'SELECT id, "sessionToken", "userId", expires FROM auth_sessions WHERE "userId" = $1',
+        'SELECT id, session_token, user_id, expires FROM auth_sessions WHERE user_id = $1',
         [user.id]
       );
       sessions = sessionsResult.rows;
@@ -54,12 +54,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
         id: user.id,
         name: user.name,
         email: user.email,
-        hasEmailVerified: user.emailVerified !== null,
+        hasEmailVerified: user.email_verified !== null,
       } : null,
       accounts: accounts.map(a => ({
         provider: a.provider,
         type: a.type,
-        providerAccountId: a.providerAccountId?.substring(0, 10) + '...',
+        providerAccountId: a.provider_account_id?.substring(0, 10) + '...',
       })),
       sessionsCount: sessions.length,
     });

@@ -75,9 +75,9 @@ function Adapter(getClient) {
       return withClient(async (client) => {
         const { name, email, emailVerified, image } = user
         const sql = `
-          INSERT INTO auth_users (name, email, "emailVerified", image)
+          INSERT INTO auth_users (name, email, email_verified, image)
           VALUES ($1, $2, $3, $4)
-          RETURNING id, name, email, "emailVerified", image
+          RETURNING id, name, email, email_verified as "emailVerified", image
         `
         const result = await client.query(sql, [
           name,
@@ -90,7 +90,7 @@ function Adapter(getClient) {
     },
     async getUser(id) {
       return withClient(async (client) => {
-        const sql = 'select * from auth_users where id = $1'
+        const sql = 'select id, name, email, email_verified as "emailVerified", image from auth_users where id = $1'
         try {
           const result = await client.query(sql, [id])
           return result.rowCount === 0 ? null : result.rows[0]
@@ -101,14 +101,14 @@ function Adapter(getClient) {
     },
     async getUserByEmail(email) {
       return withClient(async (client) => {
-        const sql = 'select * from auth_users where email = $1'
+        const sql = 'select id, name, email, email_verified as "emailVerified", image from auth_users where email = $1'
         const result = await client.query(sql, [email])
         if (result.rowCount === 0) {
           return null
         }
         const userData = result.rows[0]
         const accountsData = await client.query(
-          'select * from auth_accounts where "providerAccountId" = $1',
+          'select id, user_id as "userId", provider, type, provider_account_id as "providerAccountId", access_token, expires_at, refresh_token, id_token, scope, session_state, token_type, password from auth_accounts where user_id = $1',
           [userData.id]
         )
         return {
@@ -120,11 +120,11 @@ function Adapter(getClient) {
     async getUserByAccount({ providerAccountId, provider }) {
       return withClient(async (client) => {
         const sql = `
-          select u.* from auth_users u join auth_accounts a on u.id = a."userId"
+          select u.* from auth_users u join auth_accounts a on u.id = a.user_id
           where
           a.provider = $1
           and
-          a."providerAccountId" = $2
+          a.provider_account_id = $2
         `
         const result = await client.query(sql, [provider, providerAccountId])
         return result.rowCount !== 0 ? result.rows[0] : null
@@ -144,9 +144,9 @@ function Adapter(getClient) {
         const { id, name, email, emailVerified, image } = newUser
         const updateSql = `
           UPDATE auth_users set
-          name = $2, email = $3, "emailVerified" = $4, image = $5
+          name = $2, email = $3, email_verified = $4, image = $5
           where id = $1
-          RETURNING name, id, email, "emailVerified", image
+          RETURNING name, id, email, email_verified as "emailVerified", image
         `
         const query2 = await client.query(updateSql, [
           id,
@@ -163,10 +163,10 @@ function Adapter(getClient) {
         const sql = `
           insert into auth_accounts
           (
-            "userId",
+            user_id,
             provider,
             type,
-            "providerAccountId",
+            provider_account_id,
             access_token,
             expires_at,
             refresh_token,
@@ -179,10 +179,10 @@ function Adapter(getClient) {
           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           returning
             id,
-            "userId",
+            user_id as "userId",
             provider,
             type,
-            "providerAccountId",
+            provider_account_id as "providerAccountId",
             access_token,
             expires_at,
             refresh_token,
@@ -217,9 +217,9 @@ function Adapter(getClient) {
       }
       return withClient(async (client) => {
         const sql = `
-          insert into auth_sessions ("userId", expires, "sessionToken")
+          insert into auth_sessions (user_id, expires, session_token)
           values ($1, $2, $3)
-          RETURNING id, "sessionToken", "userId", expires
+          RETURNING id, session_token as "sessionToken", user_id as "userId", expires
         `
         const result = await client.query(sql, [userId, expires, sessionToken])
         return result.rows[0]
@@ -231,7 +231,7 @@ function Adapter(getClient) {
       }
       return withClient(async (client) => {
         const result1 = await client.query(
-          `select * from auth_sessions where "sessionToken" = $1`,
+          `select id, session_token as "sessionToken", user_id as "userId", expires from auth_sessions where session_token = $1`,
           [sessionToken]
         )
         if (result1.rowCount === 0) {
@@ -240,7 +240,7 @@ function Adapter(getClient) {
         const session = result1.rows[0]
 
         const result2 = await client.query(
-          'select * from auth_users where id = $1',
+          'select id, name, email, email_verified as "emailVerified", image from auth_users where id = $1',
           [session.userId]
         )
         if (result2.rowCount === 0) {
@@ -257,7 +257,7 @@ function Adapter(getClient) {
       return withClient(async (client) => {
         const { sessionToken } = session
         const result1 = await client.query(
-          `select * from auth_sessions where "sessionToken" = $1`,
+          `select * from auth_sessions where session_token = $1`,
           [sessionToken]
         )
         if (result1.rowCount === 0) {
@@ -272,7 +272,7 @@ function Adapter(getClient) {
         const sql = `
           UPDATE auth_sessions set
           expires = $2
-          where "sessionToken" = $1
+          where session_token = $1
         `
         const result = await client.query(sql, [
           newSession.sessionToken,
@@ -283,22 +283,22 @@ function Adapter(getClient) {
     },
     async deleteSession(sessionToken) {
       return withClient(async (client) => {
-        const sql = `delete from auth_sessions where "sessionToken" = $1`
+        const sql = `delete from auth_sessions where session_token = $1`
         await client.query(sql, [sessionToken])
       })
     },
     async unlinkAccount(partialAccount) {
       return withClient(async (client) => {
         const { provider, providerAccountId } = partialAccount
-        const sql = `delete from auth_accounts where "providerAccountId" = $1 and provider = $2`
+        const sql = `delete from auth_accounts where provider_account_id = $1 and provider = $2`
         await client.query(sql, [providerAccountId, provider])
       })
     },
     async deleteUser(userId) {
       return withClient(async (client) => {
         await client.query('delete from auth_users where id = $1', [userId])
-        await client.query('delete from auth_sessions where "userId" = $1', [userId])
-        await client.query('delete from auth_accounts where "userId" = $1', [userId])
+        await client.query('delete from auth_sessions where user_id = $1', [userId])
+        await client.query('delete from auth_accounts where user_id = $1', [userId])
       })
     },
   }
