@@ -378,107 +378,73 @@ export function createAuthConfig() {
   }
 }
 
+// Export auth() function that uses the full config with adapter
+// This is used by API routes to get the session
 export const { auth } = CreateAuth({
+  adapter,
+  secret: process.env.AUTH_SECRET,
+  trustHost: process.env.AUTH_TRUST_HOST === 'true' || process.env.NODE_ENV !== 'production',
+  basePath: '/api/auth',
   providers: [
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    }),
     Credentials({
       id: 'credentials-signin',
       name: 'Credentials Sign in',
       credentials: {
-        email: {
-          label: 'Email',
-          type: 'email',
-        },
-        password: {
-          label: 'Password',
-          type: 'password',
-        },
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Password', type: 'password' },
       },
       authorize: async (credentials) => {
         const { email, password } = credentials
-        if (!email || !password) {
-          return null
-        }
-        if (typeof email !== 'string' || typeof password !== 'string') {
-          return null
-        }
-
+        if (!email || !password) return null
+        if (typeof email !== 'string' || typeof password !== 'string') return null
         const user = await adapter.getUserByEmail(email)
-        if (!user) {
-          return null
-        }
-        const matchingAccount = user.accounts.find(
-          (account) => account.provider === 'credentials'
-        )
-        const accountPassword = matchingAccount?.password
-        if (!accountPassword) {
-          return null
-        }
-
-        const isValid = await verify(accountPassword, password)
-        if (!isValid) {
-          return null
-        }
-
-        return user
+        if (!user) return null
+        const matchingAccount = user.accounts.find((a) => a.provider === 'credentials')
+        if (!matchingAccount?.password) return null
+        const isValid = await verify(matchingAccount.password, password)
+        return isValid ? user : null
       },
     }),
     Credentials({
       id: 'credentials-signup',
       name: 'Credentials Sign up',
       credentials: {
-        email: {
-          label: 'Email',
-          type: 'email',
-        },
-        password: {
-          label: 'Password',
-          type: 'password',
-        },
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Password', type: 'password' },
         name: { label: 'Name', type: 'text', required: false },
         image: { label: 'Image', type: 'text', required: false },
       },
       authorize: async (credentials) => {
         const { email, password } = credentials
-        if (!email || !password) {
-          return null
-        }
-        if (typeof email !== 'string' || typeof password !== 'string') {
-          return null
-        }
-
-        const user = await adapter.getUserByEmail(email)
-        if (!user) {
-          const newUser = await adapter.createUser({
-            id: crypto.randomUUID(),
-            emailVerified: null,
-            email,
-            name:
-              typeof credentials.name === 'string' &&
-              credentials.name.trim().length > 0
-                ? credentials.name
-                : undefined,
-            image:
-              typeof credentials.image === 'string'
-                ? credentials.image
-                : undefined,
-          })
-          await adapter.linkAccount({
-            extraData: {
-              password: await hash(password),
-            },
-            type: 'credentials',
-            userId: newUser.id,
-            providerAccountId: newUser.id,
-            provider: 'credentials',
-          })
-          return newUser
-        }
-        return null
+        if (!email || !password) return null
+        if (typeof email !== 'string' || typeof password !== 'string') return null
+        const existing = await adapter.getUserByEmail(email)
+        if (existing) return null
+        const newUser = await adapter.createUser({
+          id: crypto.randomUUID(),
+          emailVerified: null,
+          email,
+          name: typeof credentials.name === 'string' && credentials.name.trim().length > 0 ? credentials.name : undefined,
+          image: typeof credentials.image === 'string' ? credentials.image : undefined,
+        })
+        await adapter.linkAccount({
+          extraData: { password: await hash(password) },
+          type: 'credentials',
+          userId: newUser.id,
+          providerAccountId: newUser.id,
+          provider: 'credentials',
+        })
+        return newUser
       },
     }),
   ],
   pages: {
     signIn: '/account/signin',
     signOut: '/account/logout',
+    error: '/account/signin',
   },
 })
