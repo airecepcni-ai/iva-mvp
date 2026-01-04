@@ -54,7 +54,7 @@ export default defineConfig({
     restartEnvFileChange(),
     reactRouterHonoServer({
       serverEntryPoint: './__create/index.ts',
-      runtime: 'node',
+      runtime: 'vercel',
     }),
     babel({
       include: ['src/**/*.{js,jsx,ts,tsx}'], // or RegExp: /src\/.*\.[tj]sx?$/
