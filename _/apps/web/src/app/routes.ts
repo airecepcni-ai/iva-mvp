@@ -123,6 +123,9 @@ const authRoute = route('api/auth/*', './api-auth.ts');
 // Debug endpoint for auth configuration
 const debugAuthRoute = route('api/debug/auth-config', './api-debug-auth.ts');
 
-const routes = [authRoute, debugAuthRoute, ...generateRoutes(tree), notFound];
+// Test endpoint for adapter
+const testAdapterRoute = route('api/debug/test-adapter', './api-test-adapter.ts');
+
+const routes = [authRoute, debugAuthRoute, testAdapterRoute, ...generateRoutes(tree), notFound];
 
 export default routes;
