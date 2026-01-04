@@ -4,6 +4,7 @@
 // IMPORTANT: neon-setup MUST be imported first
 import '../../__create/neon-setup';
 
+import { Pool } from '@neondatabase/serverless';
 import type { LoaderFunctionArgs } from 'react-router';
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -11,6 +12,32 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const hasGoogleClientId = !!process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_ID.length > 0;
   const hasGoogleClientSecret = !!process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_CLIENT_SECRET.length > 0;
   const hasDatabaseUrl = !!process.env.DATABASE_URL && process.env.DATABASE_URL.length > 0;
+  
+  // Test database connection
+  let dbStatus = 'NOT_TESTED';
+  let dbError = null;
+  let authTablesExist = false;
+  
+  if (hasDatabaseUrl) {
+    try {
+      const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+      const result = await pool.query('SELECT NOW() as time');
+      dbStatus = `CONNECTED (${result.rows[0]?.time})`;
+      
+      // Check if auth tables exist
+      const tablesResult = await pool.query(`
+        SELECT table_name FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name IN ('auth_users', 'auth_accounts', 'auth_sessions')
+      `);
+      authTablesExist = tablesResult.rows.length === 3;
+      
+      await pool.end();
+    } catch (err) {
+      dbStatus = 'FAILED';
+      dbError = err instanceof Error ? err.message : String(err);
+    }
+  }
   
   return Response.json({
     ok: true,
@@ -24,10 +51,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
         : 'MISSING',
       GOOGLE_CLIENT_SECRET: hasGoogleClientSecret ? 'SET' : 'MISSING',
       DATABASE_URL: hasDatabaseUrl 
-        ? `SET (${process.env.DATABASE_URL!.includes('neon') ? 'Neon' : 'other'})` 
+        ? `SET (${process.env.DATABASE_URL!.includes('neon') ? 'Neon' : process.env.DATABASE_URL!.includes('postgres') ? 'Postgres' : 'other'})` 
         : 'MISSING',
       NODE_ENV: process.env.NODE_ENV ?? 'NOT_SET',
       VERCEL: process.env.VERCEL ?? 'NOT_SET',
+    },
+    database: {
+      status: dbStatus,
+      error: dbError,
+      authTablesExist,
     },
     request: {
       url: request.url,
