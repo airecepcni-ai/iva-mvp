@@ -108,8 +108,7 @@ export async function GET(request) {
         stripe_customer_id,
         stripe_subscription_id,
         stripe_price_id,
-        created_at,
-        updated_at
+        created_at
       FROM businesses
       WHERE auth_user_id = ${userId}
       ORDER BY created_at ASC
@@ -133,8 +132,7 @@ export async function GET(request) {
           stripe_customer_id,
           stripe_subscription_id,
           stripe_price_id,
-          created_at,
-          updated_at
+          created_at
         FROM businesses
         WHERE owner_id = ${userId}
         ORDER BY created_at ASC
@@ -163,9 +161,9 @@ export async function GET(request) {
       
       try {
         const insertResult = await sql`
-          INSERT INTO businesses (owner_id, auth_user_id, name, timezone, is_subscribed, created_at, updated_at)
-          VALUES (NULL, ${userId}, ${'Můj nový salon'}, ${clientTimezone}, false, NOW(), NOW())
-          RETURNING id, name, auth_user_id, timezone, phone, vapi_phone, is_subscribed, created_at, updated_at
+          INSERT INTO businesses (owner_id, auth_user_id, name, timezone, is_subscribed, created_at)
+          VALUES (NULL, ${userId}, ${'Můj nový salon'}, ${clientTimezone}, false, NOW())
+          RETURNING id, name, auth_user_id, timezone, phone, vapi_phone, is_subscribed, created_at
         `;
         
         if (insertResult.length > 0) {
@@ -180,7 +178,7 @@ export async function GET(request) {
         businesses = await sql`
           SELECT 
             id, name, auth_user_id, timezone, phone, vapi_phone, is_subscribed,
-            stripe_customer_id, stripe_subscription_id, stripe_price_id, created_at, updated_at
+            stripe_customer_id, stripe_subscription_id, stripe_price_id, created_at
           FROM businesses
           WHERE auth_user_id = ${userId}
           ORDER BY created_at ASC
@@ -305,8 +303,8 @@ export async function POST(request) {
     // Create new business
     debugLog('POST: Creating new business...');
     const result = await sql`
-      INSERT INTO businesses (name, auth_user_id, timezone, is_subscribed, created_at, updated_at)
-      VALUES (${name}, ${userId}, ${clientTimezone}, false, NOW(), NOW())
+      INSERT INTO businesses (name, auth_user_id, timezone, is_subscribed, created_at)
+      VALUES (${name}, ${userId}, ${clientTimezone}, false, NOW())
       RETURNING id, name, auth_user_id, timezone, phone, vapi_phone, is_subscribed
     `;
 
