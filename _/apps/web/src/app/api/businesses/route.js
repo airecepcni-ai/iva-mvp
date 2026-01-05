@@ -3,101 +3,129 @@
  * POST /api/businesses - Create a new business for authenticated user
  * 
  * IMPORTANT: GET auto-creates a default business if the user has none.
- * This is idempotent and uses advisory locks to prevent race conditions.
+ * Uses simple idempotent pattern (no transactions/advisory locks).
  */
 import sql from "../utils/sql.js";
 import { getSessionFromRequest } from "../../../auth.js";
 
-// Debug logging helper - only logs when DEBUG_BUSINESSES=true
+// Debug flag - set DEBUG_BUSINESSES=true to enable verbose logging
+const DEBUG = process.env.DEBUG_BUSINESSES === 'true';
+
 function debugLog(...args) {
-  if (process.env.DEBUG_BUSINESSES === 'true') {
+  if (DEBUG) {
     console.log('[api/businesses]', ...args);
   }
 }
 
 /**
- * Extract auth debug info from request
+ * Extract cookie names from request (for debugging)
  */
-function getAuthDebugInfo(request) {
+function getCookieNames(request) {
   const cookieHeader = request.headers.get('cookie') || '';
-  const authorizationHeader = request.headers.get('authorization') || '';
-  const origin = request.headers.get('origin') || '';
-  
-  // Parse cookie names only (no values for security)
-  const cookieNames = cookieHeader
+  return cookieHeader
     .split(';')
     .map(c => c.trim().split('=')[0])
     .filter(Boolean);
+}
+
+/**
+ * Check required environment variables
+ */
+function checkEnvVars() {
+  const missing = [];
   
-  return {
-    url: request.url,
-    hasCookieHeader: cookieHeader.length > 0,
-    hasAuthorizationHeader: authorizationHeader.length > 0,
-    origin: origin || null,
-    cookieNames,
-  };
+  // Check for database connection (could be DATABASE_URL or DB_POOLER_URL)
+  const hasDbUrl = process.env.DATABASE_URL || process.env.DB_POOLER_URL || process.env.AUTH_DB_POOLER_URL;
+  if (!hasDbUrl) {
+    missing.push('DATABASE_URL (or DB_POOLER_URL)');
+  }
+  
+  return missing;
 }
 
 export async function GET(request) {
-  // Always capture auth debug info first
-  const authDebug = getAuthDebugInfo(request);
+  // ========== STEP 1: Check environment ==========
+  const missingEnvVars = checkEnvVars();
+  if (missingEnvVars.length > 0) {
+    const errorMsg = `Missing required env vars: ${missingEnvVars.join(', ')}`;
+    console.error('[api/businesses] ENV_ERROR:', errorMsg);
+    return Response.json({
+      ok: false,
+      error: 'server_misconfigured',
+      message: errorMsg,
+      businesses: [],
+      userId: null,
+    }, { status: 500 });
+  }
+
+  // ========== STEP 2: Resolve session/userId FIRST ==========
+  let userId = null;
+  let sessionError = null;
   
   try {
-    debugLog('Auth debug:', authDebug);
+    debugLog('Resolving session...', {
+      requestUrl: request.url,
+      cookieNames: getCookieNames(request),
+    });
     
-    let session = null;
-    let sessionError = null;
+    const session = await getSessionFromRequest(request);
+    userId = session?.user?.id || null;
     
-    try {
-      session = await getSessionFromRequest(request);
-    } catch (err) {
-      sessionError = err;
-      debugLog('Session resolution error:', err.message);
-    }
-    
-    const userId = session?.user?.id || null;
-    
-    debugLog('Resolved userId:', userId);
-    
-    // If userId is null/undefined, return 401 (NOT 500)
-    if (!userId) {
-      debugLog('No userId - returning 401 unauthorized', {
-        sessionError: sessionError?.message || null,
-        hasSession: !!session,
-        hasUser: !!session?.user,
-      });
-      return Response.json({ 
-        ok: false, 
-        error: "unauthorized", 
-        businesses: [], 
-        userId: null,
-        // Include debug info in non-production
-        ...(process.env.DEBUG_BUSINESSES === 'true' ? {
-          _debug: {
-            ...authDebug,
-            sessionError: sessionError?.message || null,
-          }
-        } : {})
-      }, { status: 401 });
-    }
+    debugLog('Session resolved:', { userId, hasSession: !!session, hasUser: !!session?.user });
+  } catch (err) {
+    sessionError = err;
+    console.error('[api/businesses] SESSION_ERROR:', err.message, err.stack);
+  }
 
-    // Get client timezone from header (for auto-creating business with correct tz)
-    const clientTimezone = request.headers.get('x-client-timezone') || 'Europe/Prague';
-    debugLog('clientTimezone:', clientTimezone);
+  // If no userId, return 401 immediately (don't touch DB)
+  if (!userId) {
+    debugLog('No userId - returning 401', { sessionError: sessionError?.message });
+    return Response.json({
+      ok: false,
+      error: 'unauthorized',
+      businesses: [],
+      userId: null,
+      ...(DEBUG ? { debug: { sessionError: sessionError?.message || 'No session token found' } } : {}),
+    }, { status: 401 });
+  }
 
-    // Use a transaction with advisory lock to prevent race conditions during auto-create
-    const result = await sql.transaction(async (tx) => {
-      // Advisory lock based on user ID hash to prevent concurrent auto-create for same user
-      // Using pg_advisory_xact_lock which auto-releases on transaction end
-      const lockKey = hashUserId(userId);
-      await tx`SELECT pg_advisory_xact_lock(${lockKey})`;
+  // ========== STEP 3: Database operations ==========
+  const clientTimezone = request.headers.get('x-client-timezone') || 'Europe/Prague';
+  
+  try {
+    // STEP 3a: Select businesses for this user
+    debugLog('Selecting businesses for userId:', userId);
+    
+    let businesses = await sql`
+      SELECT 
+        id,
+        name,
+        auth_user_id,
+        timezone,
+        phone,
+        vapi_phone,
+        is_subscribed,
+        stripe_customer_id,
+        stripe_subscription_id,
+        stripe_price_id,
+        created_at,
+        updated_at
+      FROM businesses
+      WHERE auth_user_id = ${userId}
+      ORDER BY created_at ASC
+    `;
 
-      // Get all businesses owned by this user (via auth_user_id column)
-      let businesses = await tx`
+    debugLog('Found businesses (auth_user_id):', businesses.length);
+
+    // STEP 3b: Check legacy owner_id if none found
+    if (businesses.length === 0) {
+      debugLog('Checking legacy owner_id...');
+      
+      businesses = await sql`
         SELECT 
           id,
           name,
-          auth_user_id,
+          owner_id,
           timezone,
           phone,
           vapi_phone,
@@ -108,116 +136,63 @@ export async function GET(request) {
           created_at,
           updated_at
         FROM businesses
-        WHERE auth_user_id = ${userId}
+        WHERE owner_id = ${userId}
         ORDER BY created_at ASC
       `;
 
-      debugLog('businesses count (auth_user_id):', businesses.length);
+      debugLog('Found businesses (owner_id):', businesses.length);
 
-      // If no businesses found, also check legacy owner_id column for backwards compatibility
-      if (businesses.length === 0) {
-        businesses = await tx`
-          SELECT 
-            id,
-            name,
-            owner_id,
-            timezone,
-            phone,
-            vapi_phone,
-            is_subscribed,
-            stripe_customer_id,
-            stripe_subscription_id,
-            stripe_price_id,
-            created_at,
-            updated_at
-          FROM businesses
-          WHERE owner_id = ${userId}
-          ORDER BY created_at ASC
-        `;
-
-        debugLog('businesses count (legacy owner_id):', businesses.length);
-
-        // If found via owner_id, migrate them to auth_user_id
-        if (businesses.length > 0) {
-          for (const biz of businesses) {
-            await tx`
-              UPDATE businesses 
-              SET auth_user_id = ${userId}
-              WHERE id = ${biz.id} AND auth_user_id IS NULL
-            `;
-          }
-          debugLog('migrated', businesses.length, 'businesses from owner_id to auth_user_id');
-        }
-      }
-
-      // If still no businesses, auto-create a default one
-      let created = false;
-      if (businesses.length === 0) {
-        debugLog('No businesses found - auto-creating default business');
-        
-        // Use SAVEPOINT for the insert to handle potential unique constraint violations gracefully
-        await tx`SAVEPOINT create_default_business`;
-        
-        try {
-          // Insert default business with owner_id = NULL (new auth model uses auth_user_id)
-          const insertResult = await tx`
-            INSERT INTO public.businesses (owner_id, auth_user_id, name, timezone, is_subscribed, created_at, updated_at)
-            VALUES (NULL, ${userId}, ${'Můj nový salon'}, ${clientTimezone}, false, NOW(), NOW())
-            RETURNING id
+      // Migrate to auth_user_id if found via owner_id
+      if (businesses.length > 0) {
+        debugLog('Migrating businesses to auth_user_id...');
+        for (const biz of businesses) {
+          await sql`
+            UPDATE businesses 
+            SET auth_user_id = ${userId}
+            WHERE id = ${biz.id} AND auth_user_id IS NULL
           `;
-          
-          await tx`RELEASE SAVEPOINT create_default_business`;
-          
-          if (insertResult.length > 0) {
-            created = true;
-            debugLog('Created default business with id:', insertResult[0].id);
-          }
-        } catch (insertError) {
-          // Rollback to savepoint on error (e.g., race condition where another request created it)
-          await tx`ROLLBACK TO SAVEPOINT create_default_business`;
-          debugLog('Insert failed (likely race condition), will re-select:', insertError.message);
         }
+        debugLog('Migration complete');
+      }
+    }
 
-        // Re-select to get the (possibly just-created) businesses
-        businesses = await tx`
+    // STEP 3c: Auto-create default business if none exist
+    let created = false;
+    if (businesses.length === 0) {
+      debugLog('No businesses found - auto-creating default business...');
+      
+      try {
+        const insertResult = await sql`
+          INSERT INTO businesses (owner_id, auth_user_id, name, timezone, is_subscribed, created_at, updated_at)
+          VALUES (NULL, ${userId}, ${'Můj nový salon'}, ${clientTimezone}, false, NOW(), NOW())
+          RETURNING id, name, auth_user_id, timezone, phone, vapi_phone, is_subscribed, created_at, updated_at
+        `;
+        
+        if (insertResult.length > 0) {
+          created = true;
+          businesses = insertResult;
+          debugLog('Created default business:', insertResult[0].id);
+        }
+      } catch (insertErr) {
+        // Insert might fail due to race condition - re-select to check
+        debugLog('Insert failed (possibly race condition):', insertErr.message);
+        
+        businesses = await sql`
           SELECT 
-            id,
-            name,
-            auth_user_id,
-            timezone,
-            phone,
-            vapi_phone,
-            is_subscribed,
-            stripe_customer_id,
-            stripe_subscription_id,
-            stripe_price_id,
-            created_at,
-            updated_at
+            id, name, auth_user_id, timezone, phone, vapi_phone, is_subscribed,
+            stripe_customer_id, stripe_subscription_id, stripe_price_id, created_at, updated_at
           FROM businesses
           WHERE auth_user_id = ${userId}
           ORDER BY created_at ASC
         `;
         
-        debugLog('businesses count after auto-create:', businesses.length);
+        debugLog('Re-selected businesses after failed insert:', businesses.length);
       }
+    }
 
-      return { businesses, created };
-    });
-
-    const { businesses, created } = result;
-
-    // Log summary for debugging
-    const selectedBusinessId = businesses.length > 0 ? businesses[0].id : null;
-    const firstBusinessIsSubscribed = businesses.length > 0 ? businesses[0].is_subscribed : null;
-    debugLog('Summary:', {
-      userId,
-      businessCount: businesses.length,
-      selectedBusinessId,
-      is_subscribed: firstBusinessIsSubscribed,
-      created,
-    });
-
-    // Return mapped businesses with consistent camelCase
+    // STEP 3d: Map and return businesses
+    debugLog('Mapping businesses for response...');
+    
     const mappedBusinesses = businesses.map((b) => ({
       id: b.id,
       name: b.name || 'Můj Salon',
@@ -229,59 +204,91 @@ export async function GET(request) {
       stripeCustomerId: b.stripe_customer_id || null,
     }));
 
+    debugLog('Response ready:', {
+      userId,
+      businessCount: mappedBusinesses.length,
+      created,
+      firstBusinessId: mappedBusinesses[0]?.id || null,
+      firstBusinessIsSubscribed: mappedBusinesses[0]?.isSubscribed ?? null,
+    });
+
     return Response.json({
       ok: true,
       businesses: mappedBusinesses,
       userId,
       created,
     });
-  } catch (error) {
-    console.error("GET /api/businesses error:", error);
-    debugLog('Caught error:', error.message, error.stack);
-    return Response.json({ 
-      ok: false, 
-      error: "internal_server_error", 
-      message: process.env.DEBUG_BUSINESSES === 'true' ? error.message : undefined,
-      businesses: [], 
-      userId: null 
+
+  } catch (dbError) {
+    // ========== DB ERROR HANDLING ==========
+    console.error('[api/businesses] DB_ERROR:', {
+      userId,
+      message: dbError.message,
+      stack: dbError.stack,
+    });
+
+    return Response.json({
+      ok: false,
+      error: 'internal_server_error',
+      businesses: [],
+      userId,
+      ...(DEBUG ? {
+        debug: {
+          message: dbError.message,
+          stack: dbError.stack,
+        }
+      } : {}),
     }, { status: 500 });
   }
 }
 
 export async function POST(request) {
-  const authDebug = getAuthDebugInfo(request);
+  // ========== Check environment ==========
+  const missingEnvVars = checkEnvVars();
+  if (missingEnvVars.length > 0) {
+    const errorMsg = `Missing required env vars: ${missingEnvVars.join(', ')}`;
+    console.error('[api/businesses] POST ENV_ERROR:', errorMsg);
+    return Response.json({
+      ok: false,
+      error: 'server_misconfigured',
+      message: errorMsg,
+      userId: null,
+    }, { status: 500 });
+  }
+
+  // ========== Resolve session/userId ==========
+  let userId = null;
   
   try {
-    debugLog('POST Auth debug:', authDebug);
-    
-    let session = null;
-    try {
-      session = await getSessionFromRequest(request);
-    } catch (err) {
-      debugLog('POST Session resolution error:', err.message);
-    }
-    
-    if (!session?.user?.id) {
-      debugLog('POST No userId - returning 401');
-      return Response.json({ ok: false, error: "unauthorized", userId: null }, { status: 401 });
-    }
+    debugLog('POST: Resolving session...');
+    const session = await getSessionFromRequest(request);
+    userId = session?.user?.id || null;
+    debugLog('POST: Session resolved:', { userId });
+  } catch (err) {
+    console.error('[api/businesses] POST SESSION_ERROR:', err.message);
+  }
 
-    const userId = session.user.id;
-    
-    let body = {};
-    try {
-      body = await request.json();
-    } catch {
-      // Empty body is fine
-    }
+  if (!userId) {
+    return Response.json({ ok: false, error: 'unauthorized', userId: null }, { status: 401 });
+  }
 
-    const name = typeof body.name === 'string' && body.name.trim() 
-      ? body.name.trim() 
-      : 'Můj Salon';
-    
-    const clientTimezone = request.headers.get('x-client-timezone') || 'Europe/Prague';
+  // ========== Parse body ==========
+  let body = {};
+  try {
+    body = await request.json();
+  } catch {
+    // Empty body is fine
+  }
 
-    // Check if user already has businesses (limit for free tier)
+  const name = typeof body.name === 'string' && body.name.trim() 
+    ? body.name.trim() 
+    : 'Můj Salon';
+  
+  const clientTimezone = request.headers.get('x-client-timezone') || 'Europe/Prague';
+
+  try {
+    // Check business limit
+    debugLog('POST: Checking business count...');
     const existingCount = await sql`
       SELECT COUNT(*) as count FROM businesses WHERE auth_user_id = ${userId}
     `;
@@ -290,12 +297,13 @@ export async function POST(request) {
     if (count >= 5) {
       return Response.json({ 
         ok: false, 
-        error: "max_businesses_reached",
+        error: 'max_businesses_reached',
         userId 
       }, { status: 400 });
     }
 
     // Create new business
+    debugLog('POST: Creating new business...');
     const result = await sql`
       INSERT INTO businesses (name, auth_user_id, timezone, is_subscribed, created_at, updated_at)
       VALUES (${name}, ${userId}, ${clientTimezone}, false, NOW(), NOW())
@@ -304,11 +312,7 @@ export async function POST(request) {
 
     const newBusiness = result[0];
 
-    debugLog('Created business via POST:', {
-      userId,
-      businessId: newBusiness.id,
-      name: newBusiness.name,
-    });
+    debugLog('POST: Created business:', { businessId: newBusiness.id, name: newBusiness.name });
 
     return Response.json({
       ok: true,
@@ -323,22 +327,23 @@ export async function POST(request) {
         isSubscribed: newBusiness.is_subscribed === true,
       },
     });
-  } catch (error) {
-    console.error("POST /api/businesses error:", error);
-    return Response.json({ ok: false, error: "internal_server_error", userId: null }, { status: 500 });
-  }
-}
+  } catch (dbError) {
+    console.error('[api/businesses] POST DB_ERROR:', {
+      userId,
+      message: dbError.message,
+      stack: dbError.stack,
+    });
 
-/**
- * Hash user ID to a 32-bit integer for advisory lock.
- * Uses a simple but effective string hash.
- */
-function hashUserId(userId) {
-  let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    const char = userId.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
+    return Response.json({
+      ok: false,
+      error: 'internal_server_error',
+      userId,
+      ...(DEBUG ? {
+        debug: {
+          message: dbError.message,
+          stack: dbError.stack,
+        }
+      } : {}),
+    }, { status: 500 });
   }
-  return Math.abs(hash);
 }
