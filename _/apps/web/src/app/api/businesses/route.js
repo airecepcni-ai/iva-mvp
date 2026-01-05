@@ -8,23 +8,78 @@
 import sql from "../utils/sql.js";
 import { getSessionFromRequest } from "../../../auth.js";
 
-// Debug logging helper - only logs in non-production or when DEBUG_BUSINESSES is set
+// Debug logging helper - only logs when DEBUG_BUSINESSES=true
 function debugLog(...args) {
-  if (process.env.NODE_ENV !== 'production' || process.env.DEBUG_BUSINESSES === 'true') {
+  if (process.env.DEBUG_BUSINESSES === 'true') {
     console.log('[api/businesses]', ...args);
   }
 }
 
-export async function GET(request) {
-  try {
-    const session = await getSessionFromRequest(request);
-    if (!session?.user?.id) {
-      debugLog('No session - unauthorized');
-      return Response.json({ ok: false, error: "Unauthorized", businesses: [], userId: null }, { status: 401 });
-    }
+/**
+ * Extract auth debug info from request
+ */
+function getAuthDebugInfo(request) {
+  const cookieHeader = request.headers.get('cookie') || '';
+  const authorizationHeader = request.headers.get('authorization') || '';
+  const origin = request.headers.get('origin') || '';
+  
+  // Parse cookie names only (no values for security)
+  const cookieNames = cookieHeader
+    .split(';')
+    .map(c => c.trim().split('=')[0])
+    .filter(Boolean);
+  
+  return {
+    url: request.url,
+    hasCookieHeader: cookieHeader.length > 0,
+    hasAuthorizationHeader: authorizationHeader.length > 0,
+    origin: origin || null,
+    cookieNames,
+  };
+}
 
-    const userId = session.user.id;
-    debugLog('userId:', userId);
+export async function GET(request) {
+  // Always capture auth debug info first
+  const authDebug = getAuthDebugInfo(request);
+  
+  try {
+    debugLog('Auth debug:', authDebug);
+    
+    let session = null;
+    let sessionError = null;
+    
+    try {
+      session = await getSessionFromRequest(request);
+    } catch (err) {
+      sessionError = err;
+      debugLog('Session resolution error:', err.message);
+    }
+    
+    const userId = session?.user?.id || null;
+    
+    debugLog('Resolved userId:', userId);
+    
+    // If userId is null/undefined, return 401 (NOT 500)
+    if (!userId) {
+      debugLog('No userId - returning 401 unauthorized', {
+        sessionError: sessionError?.message || null,
+        hasSession: !!session,
+        hasUser: !!session?.user,
+      });
+      return Response.json({ 
+        ok: false, 
+        error: "unauthorized", 
+        businesses: [], 
+        userId: null,
+        // Include debug info in non-production
+        ...(process.env.DEBUG_BUSINESSES === 'true' ? {
+          _debug: {
+            ...authDebug,
+            sessionError: sessionError?.message || null,
+          }
+        } : {})
+      }, { status: 401 });
+    }
 
     // Get client timezone from header (for auto-creating business with correct tz)
     const clientTimezone = request.headers.get('x-client-timezone') || 'Europe/Prague';
@@ -182,15 +237,33 @@ export async function GET(request) {
     });
   } catch (error) {
     console.error("GET /api/businesses error:", error);
-    return Response.json({ ok: false, error: "Internal Server Error", businesses: [], userId: null }, { status: 500 });
+    debugLog('Caught error:', error.message, error.stack);
+    return Response.json({ 
+      ok: false, 
+      error: "internal_server_error", 
+      message: process.env.DEBUG_BUSINESSES === 'true' ? error.message : undefined,
+      businesses: [], 
+      userId: null 
+    }, { status: 500 });
   }
 }
 
 export async function POST(request) {
+  const authDebug = getAuthDebugInfo(request);
+  
   try {
-    const session = await getSessionFromRequest(request);
+    debugLog('POST Auth debug:', authDebug);
+    
+    let session = null;
+    try {
+      session = await getSessionFromRequest(request);
+    } catch (err) {
+      debugLog('POST Session resolution error:', err.message);
+    }
+    
     if (!session?.user?.id) {
-      return Response.json({ ok: false, error: "Unauthorized", userId: null }, { status: 401 });
+      debugLog('POST No userId - returning 401');
+      return Response.json({ ok: false, error: "unauthorized", userId: null }, { status: 401 });
     }
 
     const userId = session.user.id;
@@ -252,7 +325,7 @@ export async function POST(request) {
     });
   } catch (error) {
     console.error("POST /api/businesses error:", error);
-    return Response.json({ ok: false, error: "Internal Server Error", userId: null }, { status: 500 });
+    return Response.json({ ok: false, error: "internal_server_error", userId: null }, { status: 500 });
   }
 }
 

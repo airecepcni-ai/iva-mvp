@@ -9,26 +9,70 @@
 import sql from "../utils/sql.js";
 import { getSessionFromRequest } from "../../../auth.js";
 
-// Debug logging helper - only logs in non-production or when DEBUG_SUBSCRIPTION is set
+// Debug logging helper - only logs when DEBUG_SUBSCRIPTION=true
 function debugLog(...args) {
-  if (process.env.NODE_ENV !== 'production' || process.env.DEBUG_SUBSCRIPTION === 'true') {
+  if (process.env.DEBUG_SUBSCRIPTION === 'true') {
     console.log('[api/subscription]', ...args);
   }
 }
 
+/**
+ * Extract auth debug info from request
+ */
+function getAuthDebugInfo(request) {
+  const cookieHeader = request.headers.get('cookie') || '';
+  const authorizationHeader = request.headers.get('authorization') || '';
+  
+  // Parse cookie names only (no values for security)
+  const cookieNames = cookieHeader
+    .split(';')
+    .map(c => c.trim().split('=')[0])
+    .filter(Boolean);
+  
+  return {
+    hasCookieHeader: cookieHeader.length > 0,
+    hasAuthorizationHeader: authorizationHeader.length > 0,
+    cookieNames,
+  };
+}
+
 export async function GET(request) {
+  const authDebug = getAuthDebugInfo(request);
+  const url = new URL(request.url);
+  const businessId = url.searchParams.get('businessId');
+  
   try {
-    const session = await getSessionFromRequest(request);
-    if (!session?.user?.id) {
-      debugLog('No session - unauthorized');
-      return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    debugLog('Auth debug:', authDebug);
+    debugLog('businessId param:', businessId);
+    
+    let session = null;
+    let sessionError = null;
+    
+    try {
+      session = await getSessionFromRequest(request);
+    } catch (err) {
+      sessionError = err;
+      debugLog('Session resolution error:', err.message);
     }
+    
+    const userId = session?.user?.id || null;
+    debugLog('Resolved userId:', userId);
 
-    const userId = session.user.id;
-    const url = new URL(request.url);
-    const businessId = url.searchParams.get('businessId');
-
-    debugLog('userId:', userId, 'businessId:', businessId);
+    // If userId is null/undefined, return 401 (NOT 500)
+    if (!userId) {
+      debugLog('No userId - returning 401 unauthorized');
+      return Response.json({ 
+        ok: false, 
+        error: "unauthorized",
+        // Include debug info when DEBUG_SUBSCRIPTION=true
+        ...(process.env.DEBUG_SUBSCRIPTION === 'true' ? {
+          _debug: {
+            ...authDebug,
+            sessionError: sessionError?.message || null,
+          }
+        } : {})
+      }, { status: 401 });
+    }
 
     // If businessId is provided, check ownership and return subscription for that specific business
     if (businessId) {
@@ -160,6 +204,11 @@ export async function GET(request) {
     });
   } catch (error) {
     console.error("GET /api/subscription error:", error);
-    return Response.json({ ok: false, error: "Internal Server Error" }, { status: 500 });
+    debugLog('Caught error:', error.message, error.stack);
+    return Response.json({ 
+      ok: false, 
+      error: "internal_server_error",
+      message: process.env.DEBUG_SUBSCRIPTION === 'true' ? error.message : undefined,
+    }, { status: 500 });
   }
 }
