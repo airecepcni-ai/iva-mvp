@@ -408,13 +408,14 @@ export function createAuthConfig() {
 
 /**
  * Derive encryption key using HKDF (matches Auth.js implementation)
- * Auth.js uses @panva/hkdf which we replicate with Web Crypto
+ * Auth.js uses @panva/hkdf with SHA-512 hash
  */
-async function deriveEncryptionKey(secret) {
+async function deriveEncryptionKey(secret, salt = '') {
   const encoder = new TextEncoder();
   const secretBytes = encoder.encode(secret);
-  const info = encoder.encode('Auth.js Generated Encryption Key');
-  const salt = new Uint8Array(0); // Empty salt
+  const saltBytes = encoder.encode(salt);
+  // Auth.js uses this info format with salt included
+  const info = encoder.encode(salt ? `Auth.js Generated Encryption Key (${salt})` : 'Auth.js Generated Encryption Key');
   
   // Import secret as HKDF key
   const baseKey = await crypto.subtle.importKey(
@@ -425,12 +426,12 @@ async function deriveEncryptionKey(secret) {
     ['deriveBits']
   );
   
-  // Derive 64 bytes (512 bits) for A256CBC-HS512
+  // Derive 64 bytes (512 bits) for A256CBC-HS512 using SHA-512
   const derivedBits = await crypto.subtle.deriveBits(
     {
       name: 'HKDF',
-      hash: 'SHA-256',
-      salt: salt,
+      hash: 'SHA-512', // Auth.js uses SHA-512
+      salt: saltBytes,
       info: info,
     },
     baseKey,
