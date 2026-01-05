@@ -14,11 +14,14 @@ import { getSessionFromRequest } from "../../../../auth.js";
 
 /**
  * Derive encryption key using HKDF (matches Auth.js implementation)
+ * Matches @auth/core jwt.ts getDerivedEncryptionKey function
  */
-async function deriveEncryptionKey(secret) {
+async function deriveEncryptionKey(secret, salt = '') {
   const encoder = new TextEncoder();
   const secretBytes = encoder.encode(secret);
-  const info = encoder.encode('Auth.js Generated Encryption Key');
+  const saltBytes = encoder.encode(salt);
+  // Auth.js format: "Auth.js Generated Encryption Key (${salt})"
+  const info = encoder.encode(`Auth.js Generated Encryption Key (${salt})`);
   
   const baseKey = await crypto.subtle.importKey(
     'raw',
@@ -28,12 +31,12 @@ async function deriveEncryptionKey(secret) {
     ['deriveBits']
   );
   
-  // Auth.js uses SHA-256, 64 bytes for A256CBC-HS512
+  // Auth.js uses SHA-512 for HKDF
   const derivedBits = await crypto.subtle.deriveBits(
     {
       name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new Uint8Array(0),
+      hash: 'SHA-512',
+      salt: saltBytes,
       info: info,
     },
     baseKey,
@@ -83,40 +86,42 @@ async function debugJwtDecode(token) {
       return { attempted: true, error: 'jose library not available: ' + e.message, header };
     }
     
-    // Derive encryption key
-    let encryptionKey;
-    try {
-      encryptionKey = await deriveEncryptionKey(secret);
-    } catch (e) {
-      return { attempted: true, error: 'Key derivation failed: ' + e.message, header };
+    // Try to decrypt with different salt values
+    const saltsToTry = ['', 'authjs.session-token', '__Secure-authjs.session-token'];
+    const errors = [];
+    
+    for (const salt of saltsToTry) {
+      try {
+        const encryptionKey = await deriveEncryptionKey(secret, salt);
+        const { payload } = await jose.jwtDecrypt(token, encryptionKey, {
+          clockTolerance: 15,
+        });
+        
+        return { 
+          attempted: true, 
+          success: true,
+          saltUsed: salt,
+          header,
+          payload: {
+            userId: payload.userId || payload.sub,
+            email: payload.email,
+            name: payload.name,
+            exp: payload.exp,
+            iat: payload.iat,
+          },
+        };
+      } catch (e) {
+        errors.push({ salt, error: e.message });
+      }
     }
     
-    // Try to decrypt using jwtDecrypt
-    try {
-      const { payload } = await jose.jwtDecrypt(token, encryptionKey, {
-        clockTolerance: 15,
-      });
-      
-      return { 
-        attempted: true, 
-        success: true,
-        header,
-        payload: {
-          userId: payload.userId || payload.sub,
-          email: payload.email,
-          name: payload.name,
-          exp: payload.exp,
-          iat: payload.iat,
-        },
-      };
-    } catch (e) {
-      return { 
-        attempted: true, 
-        error: 'Decrypt failed: ' + e.message,
-        header,
-        tokenPreview: token.substring(0, 50) + '...',
-      };
-    }
+    return { 
+      attempted: true, 
+      error: 'All decrypt attempts failed',
+      header,
+      tokenPreview: token.substring(0, 50) + '...',
+      triedSalts: errors,
+    };
   } catch (e) {
     return { attempted: true, error: 'Unexpected error: ' + e.message };
   }

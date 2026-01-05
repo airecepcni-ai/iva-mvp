@@ -409,13 +409,14 @@ export function createAuthConfig() {
 
 /**
  * Decode JWT using jose library with proper Auth.js key derivation
- * Uses the @panva/hkdf compatible approach
+ * Matches @auth/core jwt.ts getDerivedEncryptionKey function
  */
-async function getDerivedEncryptionKey(secret) {
+async function getDerivedEncryptionKey(secret, salt = '') {
   const encoder = new TextEncoder();
-  // Auth.js uses empty salt and specific info string
   const secretBytes = encoder.encode(secret);
-  const info = encoder.encode('Auth.js Generated Encryption Key');
+  const saltBytes = encoder.encode(salt);
+  // Auth.js format: "Auth.js Generated Encryption Key (${salt})"
+  const info = encoder.encode(`Auth.js Generated Encryption Key (${salt})`);
   
   const baseKey = await crypto.subtle.importKey(
     'raw',
@@ -425,12 +426,12 @@ async function getDerivedEncryptionKey(secret) {
     ['deriveBits']
   );
   
-  // Auth.js uses SHA-256 for HKDF (not SHA-512)
+  // Auth.js uses SHA-512 for HKDF
   const derivedBits = await crypto.subtle.deriveBits(
     {
       name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new Uint8Array(0),
+      hash: 'SHA-512',
+      salt: saltBytes,
       info: info,
     },
     baseKey,
@@ -468,38 +469,46 @@ export async function getSessionFromRequest(request) {
     return null;
   }
   
-  // Try JWT decode using jose.jwtDecrypt
+  // Try JWT decode using jose.jwtDecrypt with different salt values
   const secret = process.env.AUTH_SECRET;
   if (secret) {
-    try {
-      const encryptionKey = await getDerivedEncryptionKey(secret);
-      const { payload } = await jose.jwtDecrypt(sessionToken, encryptionKey, {
-        clockTolerance: 15,
-      });
-      
-      // Check if expired
-      if (payload.exp && payload.exp * 1000 < Date.now()) {
-        return null;
+    // Try different salts that Auth.js might use
+    const saltsToTry = ['', 'authjs.session-token', '__Secure-authjs.session-token'];
+    
+    for (const salt of saltsToTry) {
+      try {
+        const encryptionKey = await getDerivedEncryptionKey(secret, salt);
+        const { payload } = await jose.jwtDecrypt(sessionToken, encryptionKey, {
+          clockTolerance: 15,
+        });
+        
+        // Check if expired
+        if (payload.exp && payload.exp * 1000 < Date.now()) {
+          return null;
+        }
+        
+        // Auth.js stores userId in different fields depending on version
+        const userId = payload.userId || payload.sub || payload.id;
+        
+        if (userId) {
+          return {
+            user: {
+              id: userId,
+              name: payload.name || null,
+              email: payload.email || null,
+              image: payload.picture || payload.image || null,
+            },
+            expires: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+          };
+        }
+      } catch (jwtError) {
+        // This salt didn't work, try next
+        continue;
       }
-      
-      // Auth.js stores userId in different fields depending on version
-      const userId = payload.userId || payload.sub || payload.id;
-      
-      if (userId) {
-        return {
-          user: {
-            id: userId,
-            name: payload.name || null,
-            email: payload.email || null,
-            image: payload.picture || payload.image || null,
-          },
-          expires: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
-        };
-      }
-    } catch (jwtError) {
-      // JWT decryption failed - try database lookup
-      console.log('[getSessionFromRequest] JWT decode failed:', jwtError.message);
     }
+    
+    // All salts failed
+    console.log('[getSessionFromRequest] JWT decode failed with all salt values');
   }
   
   // Fallback to database session lookup (for OAuth providers or legacy sessions)
