@@ -407,6 +407,40 @@ export function createAuthConfig() {
 }
 
 /**
+ * Derive encryption key using HKDF (matches Auth.js implementation)
+ * Auth.js uses @panva/hkdf which we replicate with Web Crypto
+ */
+async function deriveEncryptionKey(secret) {
+  const encoder = new TextEncoder();
+  const secretBytes = encoder.encode(secret);
+  const info = encoder.encode('Auth.js Generated Encryption Key');
+  const salt = new Uint8Array(0); // Empty salt
+  
+  // Import secret as HKDF key
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    secretBytes,
+    { name: 'HKDF' },
+    false,
+    ['deriveBits']
+  );
+  
+  // Derive 64 bytes (512 bits) for A256CBC-HS512
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: salt,
+      info: info,
+    },
+    baseKey,
+    512 // 64 bytes for A256CBC-HS512
+  );
+  
+  return new Uint8Array(derivedBits);
+}
+
+/**
  * Decode and verify a JWT token from Auth.js
  * Returns the payload if valid, null otherwise
  */
@@ -418,35 +452,13 @@ async function decodeAuthJsToken(token) {
   }
   
   try {
-    // Auth.js uses a specific encryption scheme
-    // The token is a JWE (encrypted JWT)
-    const secretKey = new TextEncoder().encode(secret);
+    // Derive the encryption key (same as Auth.js)
+    const encryptionKey = await deriveEncryptionKey(secret);
     
-    // Derive key for decryption (Auth.js uses HKDF)
-    const derivedKey = await crypto.subtle.importKey(
-      'raw',
-      secretKey,
-      { name: 'HKDF' },
-      false,
-      ['deriveBits', 'deriveKey']
-    );
-    
-    const encryptionKey = await crypto.subtle.deriveKey(
-      {
-        name: 'HKDF',
-        salt: new TextEncoder().encode(''),
-        info: new TextEncoder().encode('Auth.js Generated Encryption Key'),
-        hash: 'SHA-256',
-      },
-      derivedKey,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['decrypt']
-    );
-    
-    // Decrypt the JWE
-    const { plaintext } = await jose.compactDecrypt(token, encryptionKey);
-    const payload = JSON.parse(new TextDecoder().decode(plaintext));
+    // Use jose.jwtDecrypt with the derived key
+    const { payload } = await jose.jwtDecrypt(token, encryptionKey, {
+      clockTolerance: 15, // 15 seconds tolerance
+    });
     
     // Check expiration
     if (payload.exp && payload.exp * 1000 < Date.now()) {

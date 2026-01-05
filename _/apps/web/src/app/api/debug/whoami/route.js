@@ -13,6 +13,38 @@
 import { getSessionFromRequest } from "../../../../auth.js";
 
 /**
+ * Derive encryption key using HKDF (matches Auth.js implementation)
+ */
+async function deriveEncryptionKey(secret) {
+  const encoder = new TextEncoder();
+  const secretBytes = encoder.encode(secret);
+  const info = encoder.encode('Auth.js Generated Encryption Key');
+  const salt = new Uint8Array(0);
+  
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    secretBytes,
+    { name: 'HKDF' },
+    false,
+    ['deriveBits']
+  );
+  
+  // Derive 64 bytes (512 bits) for A256CBC-HS512
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: salt,
+      info: info,
+    },
+    baseKey,
+    512
+  );
+  
+  return new Uint8Array(derivedBits);
+}
+
+/**
  * Try to decode JWT token manually for debugging
  */
 async function debugJwtDecode(token) {
@@ -26,7 +58,7 @@ async function debugJwtDecode(token) {
   }
   
   try {
-    // Check token format
+    // Check token format (JWE has 5 parts)
     const parts = token.split('.');
     if (parts.length !== 5) {
       return { 
@@ -36,55 +68,40 @@ async function debugJwtDecode(token) {
       };
     }
     
+    // Parse JWE header to see the algorithm
+    let header;
+    try {
+      header = JSON.parse(atob(parts[0].replace(/-/g, '+').replace(/_/g, '/')));
+    } catch {
+      header = { parseError: true };
+    }
+    
     // Try to import jose dynamically
     let jose;
     try {
       jose = await import('jose');
     } catch (e) {
-      return { attempted: true, error: 'jose library not available: ' + e.message };
+      return { attempted: true, error: 'jose library not available: ' + e.message, header };
     }
     
-    // Try HKDF key derivation
-    const secretKey = new TextEncoder().encode(secret);
-    
-    let derivedKey;
-    try {
-      derivedKey = await crypto.subtle.importKey(
-        'raw',
-        secretKey,
-        { name: 'HKDF' },
-        false,
-        ['deriveBits', 'deriveKey']
-      );
-    } catch (e) {
-      return { attempted: true, error: 'HKDF import failed: ' + e.message };
-    }
-    
+    // Derive encryption key
     let encryptionKey;
     try {
-      encryptionKey = await crypto.subtle.deriveKey(
-        {
-          name: 'HKDF',
-          salt: new TextEncoder().encode(''),
-          info: new TextEncoder().encode('Auth.js Generated Encryption Key'),
-          hash: 'SHA-256',
-        },
-        derivedKey,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['decrypt']
-      );
+      encryptionKey = await deriveEncryptionKey(secret);
     } catch (e) {
-      return { attempted: true, error: 'Key derivation failed: ' + e.message };
+      return { attempted: true, error: 'Key derivation failed: ' + e.message, header };
     }
     
-    // Try to decrypt
+    // Try to decrypt using jwtDecrypt
     try {
-      const { plaintext } = await jose.compactDecrypt(token, encryptionKey);
-      const payload = JSON.parse(new TextDecoder().decode(plaintext));
+      const { payload } = await jose.jwtDecrypt(token, encryptionKey, {
+        clockTolerance: 15,
+      });
+      
       return { 
         attempted: true, 
-        success: true, 
+        success: true,
+        header,
         payload: {
           userId: payload.userId || payload.sub,
           email: payload.email,
@@ -97,6 +114,7 @@ async function debugJwtDecode(token) {
       return { 
         attempted: true, 
         error: 'Decrypt failed: ' + e.message,
+        header,
         tokenPreview: token.substring(0, 50) + '...',
       };
     }
