@@ -41,12 +41,14 @@ export async function GET(request) {
   const url = new URL(request.url);
   const businessId = url.searchParams.get('businessId');
   
+  // Declare session outside try block so it's accessible in catch
+  let session = null;
+  let sessionError = null;
+  let userId = null;
+  
   try {
     debugLog('Auth debug:', authDebug);
     debugLog('businessId param:', businessId);
-    
-    let session = null;
-    let sessionError = null;
     
     try {
       session = await getSessionFromRequest(request);
@@ -55,7 +57,7 @@ export async function GET(request) {
       debugLog('Session resolution error:', err.message);
     }
     
-    const userId = session?.user?.id || null;
+    userId = session?.user?.id || null;
     debugLog('Resolved userId:', userId);
 
     // If userId is null/undefined, return 401 (NOT 500)
@@ -85,8 +87,7 @@ export async function GET(request) {
           is_subscribed,
           stripe_customer_id,
           stripe_subscription_id,
-          stripe_price_id,
-          stripe_subscription_status
+          stripe_price_id
         FROM businesses
         WHERE id = ${businessId}
         LIMIT 1
@@ -121,7 +122,6 @@ export async function GET(request) {
         businessId: business.id,
         businessName: business.name,
         isSubscribed,
-        stripeStatus: business.stripe_subscription_status,
       });
 
       return Response.json({
@@ -133,7 +133,6 @@ export async function GET(request) {
         stripeCustomerId: business.stripe_customer_id || null,
         stripeSubscriptionId: business.stripe_subscription_id || null,
         stripePriceId: business.stripe_price_id || null,
-        stripeSubscriptionStatus: business.stripe_subscription_status || null,
       });
     }
 
@@ -146,8 +145,7 @@ export async function GET(request) {
         is_subscribed,
         stripe_customer_id,
         stripe_subscription_id,
-        stripe_price_id,
-        stripe_subscription_status
+        stripe_price_id
       FROM businesses
       WHERE auth_user_id = ${userId}
       ORDER BY created_at ASC
@@ -162,8 +160,7 @@ export async function GET(request) {
           is_subscribed,
           stripe_customer_id,
           stripe_subscription_id,
-          stripe_price_id,
-          stripe_subscription_status
+          stripe_price_id
         FROM businesses
         WHERE owner_id = ${userId}
         ORDER BY created_at ASC
@@ -179,7 +176,6 @@ export async function GET(request) {
       stripeCustomerId: b.stripe_customer_id || null,
       stripeSubscriptionId: b.stripe_subscription_id || null,
       stripePriceId: b.stripe_price_id || null,
-      stripeSubscriptionStatus: b.stripe_subscription_status || null,
     }));
 
     // User is subscribed if ANY of their businesses has an active subscription
@@ -203,12 +199,23 @@ export async function GET(request) {
       })),
     });
   } catch (error) {
-    console.error("GET /api/subscription error:", error);
-    debugLog('Caught error:', error.message, error.stack);
+    console.error("[api/subscription] DB_ERROR:", {
+      userId,
+      businessId,
+      message: error.message,
+      stack: error.stack,
+    });
+    
     return Response.json({ 
       ok: false, 
       error: "internal_server_error",
-      message: process.env.DEBUG_SUBSCRIPTION === 'true' ? error.message : undefined,
+      userId,
+      ...(process.env.DEBUG_SUBSCRIPTION === 'true' ? {
+        debug: {
+          message: error.message,
+          stack: error.stack,
+        }
+      } : {}),
     }, { status: 500 });
   }
 }
