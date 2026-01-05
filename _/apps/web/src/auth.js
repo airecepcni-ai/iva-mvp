@@ -8,6 +8,7 @@ import Credentials from "@auth/core/providers/credentials"
 import Google from "@auth/core/providers/google"
 import { Pool } from '@neondatabase/serverless'
 import { hash, verify } from 'argon2'
+import * as jose from 'jose'
 
 const missingDatabaseError = new Error(
   'No database connection string was provided. Perhaps process.env.DATABASE_URL has not been set'
@@ -306,6 +307,26 @@ function Adapter(getClient) {
 
 const adapter = Adapter(getPool)
 
+// Shared callbacks for both auth configs
+const sharedCallbacks = {
+  async jwt({ token, user }) {
+    // When user signs in, include their ID in the token
+    if (user?.id) {
+      token.userId = user.id;
+      token.email = user.email;
+      token.name = user.name;
+    }
+    return token;
+  },
+  async session({ session, token }) {
+    // Include user ID in session from JWT token
+    if (token?.userId) {
+      session.user.id = token.userId;
+    }
+    return session;
+  },
+};
+
 // Auth.js configuration factory - used by Hono middleware
 export function createAuthConfig() {
   return {
@@ -313,17 +334,18 @@ export function createAuthConfig() {
     secret: process.env.AUTH_SECRET,
     trustHost: process.env.AUTH_TRUST_HOST === 'true' || process.env.NODE_ENV !== 'production',
     basePath: '/api/auth',
-    // Use database sessions so Credentials provider creates session records
+    // Use JWT strategy - this is what works with Credentials provider
+    // The JWT contains the user ID which we use to look up the user
     session: {
-      strategy: 'database',
+      strategy: 'jwt',
       maxAge: 30 * 24 * 60 * 60, // 30 days
-      updateAge: 24 * 60 * 60, // 24 hours
     },
     pages: {
       signIn: '/account/signin',
       signOut: '/account/logout',
       error: '/account/signin',
     },
+    callbacks: sharedCallbacks,
     providers: [
       Google({
         clientId: process.env.GOOGLE_CLIENT_ID,
@@ -385,15 +407,73 @@ export function createAuthConfig() {
 }
 
 /**
+ * Decode and verify a JWT token from Auth.js
+ * Returns the payload if valid, null otherwise
+ */
+async function decodeAuthJsToken(token) {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    console.error('[decodeAuthJsToken] AUTH_SECRET not set');
+    return null;
+  }
+  
+  try {
+    // Auth.js uses a specific encryption scheme
+    // The token is a JWE (encrypted JWT)
+    const secretKey = new TextEncoder().encode(secret);
+    
+    // Derive key for decryption (Auth.js uses HKDF)
+    const derivedKey = await crypto.subtle.importKey(
+      'raw',
+      secretKey,
+      { name: 'HKDF' },
+      false,
+      ['deriveBits', 'deriveKey']
+    );
+    
+    const encryptionKey = await crypto.subtle.deriveKey(
+      {
+        name: 'HKDF',
+        salt: new TextEncoder().encode(''),
+        info: new TextEncoder().encode('Auth.js Generated Encryption Key'),
+        hash: 'SHA-256',
+      },
+      derivedKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt']
+    );
+    
+    // Decrypt the JWE
+    const { plaintext } = await jose.compactDecrypt(token, encryptionKey);
+    const payload = JSON.parse(new TextDecoder().decode(plaintext));
+    
+    // Check expiration
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      return null;
+    }
+    
+    return payload;
+  } catch (error) {
+    console.error('[decodeAuthJsToken] Decode error:', error.message);
+    return null;
+  }
+}
+
+/**
  * Get session from a Request object - works in React Router resource routes
  * This doesn't require Hono context, so it works on Vercel serverless functions
+ * 
+ * Supports both:
+ * - JWT sessions (Credentials provider) - decodes JWT token
+ * - Database sessions (OAuth providers) - queries database
  */
 export async function getSessionFromRequest(request) {
   const cookieHeader = request.headers.get('cookie') || '';
   const cookies = Object.fromEntries(
     cookieHeader.split(';').map(c => {
       const [key, ...vals] = c.trim().split('=');
-      return [key, vals.join('=')];
+      return [key, decodeURIComponent(vals.join('='))];
     }).filter(([k]) => k)
   );
   
@@ -408,6 +488,22 @@ export async function getSessionFromRequest(request) {
     return null;
   }
   
+  // Try JWT decode first (for Credentials provider)
+  const jwtPayload = await decodeAuthJsToken(sessionToken);
+  if (jwtPayload?.userId) {
+    // Valid JWT - return session from JWT payload
+    return {
+      user: {
+        id: jwtPayload.userId,
+        name: jwtPayload.name || null,
+        email: jwtPayload.email || null,
+        image: jwtPayload.picture || null,
+      },
+      expires: jwtPayload.exp ? new Date(jwtPayload.exp * 1000).toISOString() : null,
+    };
+  }
+  
+  // Fallback to database session lookup (for OAuth providers or legacy sessions)
   try {
     const result = await adapter.getSessionAndUser(sessionToken);
     if (!result) {
@@ -431,7 +527,7 @@ export async function getSessionFromRequest(request) {
       expires: session.expires?.toISOString?.() || session.expires,
     };
   } catch (error) {
-    console.error('[getSessionFromRequest] Error:', error);
+    console.error('[getSessionFromRequest] DB lookup error:', error);
     return null;
   }
 }
@@ -443,12 +539,12 @@ export const { auth } = CreateAuth({
   secret: process.env.AUTH_SECRET,
   trustHost: process.env.AUTH_TRUST_HOST === 'true' || process.env.NODE_ENV !== 'production',
   basePath: '/api/auth',
-  // Use database sessions so Credentials provider creates session records
+  // Use JWT strategy - this is what works with Credentials provider
   session: {
-    strategy: 'database',
+    strategy: 'jwt',
     maxAge: 30 * 24 * 60 * 60, // 30 days
-    updateAge: 24 * 60 * 60, // 24 hours
   },
+  callbacks: sharedCallbacks,
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,
