@@ -313,6 +313,12 @@ export function createAuthConfig() {
     secret: process.env.AUTH_SECRET,
     trustHost: process.env.AUTH_TRUST_HOST === 'true' || process.env.NODE_ENV !== 'production',
     basePath: '/api/auth',
+    // Use database sessions so Credentials provider creates session records
+    session: {
+      strategy: 'database',
+      maxAge: 30 * 24 * 60 * 60, // 30 days
+      updateAge: 24 * 60 * 60, // 24 hours
+    },
     pages: {
       signIn: '/account/signin',
       signOut: '/account/logout',
@@ -437,6 +443,12 @@ export const { auth } = CreateAuth({
   secret: process.env.AUTH_SECRET,
   trustHost: process.env.AUTH_TRUST_HOST === 'true' || process.env.NODE_ENV !== 'production',
   basePath: '/api/auth',
+  // Use database sessions so Credentials provider creates session records
+  session: {
+    strategy: 'database',
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+    updateAge: 24 * 60 * 60, // 24 hours
+  },
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,
