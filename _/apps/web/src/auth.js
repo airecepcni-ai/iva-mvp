@@ -443,14 +443,18 @@ async function getDerivedEncryptionKey(secret, salt = '') {
 
 /**
  * Get session from a Request object - works in React Router resource routes
- * This doesn't require Hono context, so it works on Vercel serverless functions
  * 
- * Supports both:
- * - JWT sessions (Credentials provider) - decodes JWT token using jose
- * - Database sessions (OAuth providers) - queries database
+ * Uses Auth.js's /api/auth/session endpoint internally to decode the JWT,
+ * since that endpoint handles the key derivation correctly.
  */
 export async function getSessionFromRequest(request) {
   const cookieHeader = request.headers.get('cookie') || '';
+  
+  if (!cookieHeader) {
+    return null;
+  }
+  
+  // Parse cookies to check if session token exists
   const cookies = Object.fromEntries(
     cookieHeader.split(';').map(c => {
       const [key, ...vals] = c.trim().split('=');
@@ -458,85 +462,90 @@ export async function getSessionFromRequest(request) {
     }).filter(([k]) => k)
   );
   
-  // Auth.js uses different cookie names based on secure/non-secure
   const isSecure = request.url?.startsWith('https://') || process.env.NODE_ENV === 'production';
   const cookiePrefix = isSecure ? '__Secure-' : '';
   const sessionTokenName = `${cookiePrefix}authjs.session-token`;
-  
   const sessionToken = cookies[sessionTokenName] || cookies['authjs.session-token'];
   
   if (!sessionToken) {
     return null;
   }
   
-  // Try JWT decode using jose.jwtDecrypt with different salt values
-  const secret = process.env.AUTH_SECRET;
-  if (secret) {
-    // Try different salts that Auth.js might use
-    const saltsToTry = ['', 'authjs.session-token', '__Secure-authjs.session-token'];
-    
-    for (const salt of saltsToTry) {
-      try {
-        const encryptionKey = await getDerivedEncryptionKey(secret, salt);
-        const { payload } = await jose.jwtDecrypt(sessionToken, encryptionKey, {
-          clockTolerance: 15,
-        });
-        
-        // Check if expired
-        if (payload.exp && payload.exp * 1000 < Date.now()) {
-          return null;
-        }
-        
-        // Auth.js stores userId in different fields depending on version
-        const userId = payload.userId || payload.sub || payload.id;
-        
-        if (userId) {
-          return {
-            user: {
-              id: userId,
-              name: payload.name || null,
-              email: payload.email || null,
-              image: payload.picture || payload.image || null,
-            },
-            expires: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
-          };
-        }
-      } catch (jwtError) {
-        // This salt didn't work, try next
-        continue;
-      }
-    }
-    
-    // All salts failed
-    console.log('[getSessionFromRequest] JWT decode failed with all salt values');
-  }
-  
-  // Fallback to database session lookup (for OAuth providers or legacy sessions)
+  // Call Auth.js session endpoint internally
+  // This uses Auth.js's own key derivation which is guaranteed to match
   try {
-    const result = await adapter.getSessionAndUser(sessionToken);
-    if (!result) {
-      return null;
-    }
+    const url = new URL(request.url);
+    const sessionUrl = `${url.protocol}//${url.host}/api/auth/session`;
     
-    const { session, user } = result;
-    
-    // Check if session is expired
-    if (session.expires && new Date(session.expires) < new Date()) {
-      return null;
-    }
-    
-    return {
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        image: user.image,
+    const sessionResponse = await fetch(sessionUrl, {
+      method: 'GET',
+      headers: {
+        'Cookie': cookieHeader,
       },
-      expires: session.expires?.toISOString?.() || session.expires,
-    };
+    });
+    
+    if (!sessionResponse.ok) {
+      console.log('[getSessionFromRequest] Session endpoint returned:', sessionResponse.status);
+      return null;
+    }
+    
+    const session = await sessionResponse.json();
+    
+    // Auth.js returns {} for no session, or { user: {...}, expires: "..." }
+    if (!session || !session.user || !session.user.id) {
+      // Try to get id from email or other fields
+      if (session?.user?.email) {
+        // Look up user by email in database
+        try {
+          const user = await adapter.getUserByEmail(session.user.email);
+          if (user) {
+            return {
+              user: {
+                id: user.id,
+                name: session.user.name || user.name,
+                email: session.user.email,
+                image: session.user.image || user.image,
+              },
+              expires: session.expires,
+            };
+          }
+        } catch (dbError) {
+          console.error('[getSessionFromRequest] DB lookup error:', dbError);
+        }
+      }
+      return null;
+    }
+    
+    return session;
   } catch (error) {
-    console.error('[getSessionFromRequest] DB lookup error:', error);
-    return null;
+    console.error('[getSessionFromRequest] Error calling session endpoint:', error);
+    
+    // Fallback to database session lookup
+    try {
+      const result = await adapter.getSessionAndUser(sessionToken);
+      if (!result) {
+        return null;
+      }
+      
+      const { session, user } = result;
+      
+      if (session.expires && new Date(session.expires) < new Date()) {
+        return null;
+      }
+      
+      return {
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          image: user.image,
+        },
+        expires: session.expires?.toISOString?.() || session.expires,
+      };
+    } catch (dbError) {
+      console.error('[getSessionFromRequest] DB fallback error:', dbError);
+      return null;
+    }
   }
 }
 

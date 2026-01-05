@@ -157,7 +157,30 @@ export async function GET(request) {
   // Debug JWT decode
   const jwtDebug = await debugJwtDecode(sessionToken);
   
-  // Try to resolve session using the main function
+  // Try to call Auth.js session endpoint directly for debugging
+  let authJsSession = null;
+  let authJsError = null;
+  try {
+    const url = new URL(request.url);
+    const sessionUrl = `${url.protocol}//${url.host}/api/auth/session`;
+    
+    const sessionResponse = await fetch(sessionUrl, {
+      method: 'GET',
+      headers: {
+        'Cookie': cookieHeader,
+      },
+    });
+    
+    if (sessionResponse.ok) {
+      authJsSession = await sessionResponse.json();
+    } else {
+      authJsError = `Status ${sessionResponse.status}`;
+    }
+  } catch (err) {
+    authJsError = err.message;
+  }
+  
+  // Try to resolve session using our wrapper function
   let userId = null;
   let sessionError = null;
   let sessionExpires = null;
@@ -180,7 +203,10 @@ export async function GET(request) {
     sessionTokenFound,
     sessionError,
     sessionExpires,
-    // JWT debugging
+    // Auth.js /api/auth/session response (directly)
+    authJsSession,
+    authJsError,
+    // JWT debugging (our manual decode attempt)
     jwtDebug,
     // Request metadata
     requestUrl: request.url,
