@@ -68,6 +68,12 @@ export async function fetchSession(): Promise<{ user: { id: string; email?: stri
 export interface FetchBusinessesResult {
   businesses: Business[];
   userId: string | null;
+  /** Whether a default business was just auto-created */
+  created?: boolean;
+  /** Error state: 'unauthorized' (401), 'server_error' (500), 'network_error', or null */
+  error?: 'unauthorized' | 'server_error' | 'network_error' | null;
+  /** HTTP status code if available */
+  httpStatus?: number;
 }
 
 export interface CreateBusinessResult {
@@ -118,18 +124,31 @@ export async function fetchUserBusinessesWithUser(): Promise<FetchBusinessesResu
   });
 
   if (!res.ok) {
-    if (res.status === 401) {
-      console.log('[fetchUserBusinesses] Not authenticated');
+    if (res.status === 401 || res.status === 403) {
+      console.log('[fetchUserBusinesses] Not authenticated (401/403)');
       if (process.env.NODE_ENV !== 'production') {
-        console.log(`[perf] /api/businesses ${Math.round(perfNow() - t0)}ms status=401`);
+        console.log(`[perf] /api/businesses ${Math.round(perfNow() - t0)}ms status=${res.status}`);
       }
-      return { businesses: [], userId: null };
+      return { businesses: [], userId: null, error: 'unauthorized', httpStatus: res.status };
     }
-    console.warn('[fetchUserBusinesses] Fetch failed:', res.status);
+    
+    // Server error (500) - user might be authenticated but server failed
+    console.warn('[fetchUserBusinesses] Server error:', res.status);
     if (process.env.NODE_ENV !== 'production') {
       console.log(`[perf] /api/businesses ${Math.round(perfNow() - t0)}ms status=${res.status}`);
     }
-    return { businesses: [], userId: null };
+    
+    // Try to extract userId from error response if available
+    let errorUserId = null;
+    try {
+      const errorData = await res.json();
+      errorUserId = errorData?.userId || null;
+      console.warn('[fetchUserBusinesses] Server error details:', errorData);
+    } catch {
+      // Ignore JSON parse errors
+    }
+    
+    return { businesses: [], userId: errorUserId, error: 'server_error', httpStatus: res.status };
   }
 
   const data = await res.json();
@@ -151,7 +170,7 @@ export async function fetchUserBusinessesWithUser(): Promise<FetchBusinessesResu
     );
   }
 
-  return { businesses, userId };
+  return { businesses, userId, created, error: null, httpStatus: 200 };
 }
 
 /**

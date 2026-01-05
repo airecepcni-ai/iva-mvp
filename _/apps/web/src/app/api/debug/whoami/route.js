@@ -7,8 +7,103 @@
  * - hasCookieHeader / hasAuthorizationHeader
  * - cookieNames: list of cookie names (no values for security)
  * - sessionTokenFound: boolean
+ * - jwtDecodeAttempted: boolean
+ * - jwtDecodeError: string | null
  */
 import { getSessionFromRequest } from "../../../../auth.js";
+
+/**
+ * Try to decode JWT token manually for debugging
+ */
+async function debugJwtDecode(token) {
+  if (!token) {
+    return { attempted: false, error: 'no_token' };
+  }
+  
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    return { attempted: true, error: 'AUTH_SECRET not set' };
+  }
+  
+  try {
+    // Check token format
+    const parts = token.split('.');
+    if (parts.length !== 5) {
+      return { 
+        attempted: true, 
+        error: `Invalid JWE format: expected 5 parts, got ${parts.length}`,
+        tokenPreview: token.substring(0, 50) + '...',
+      };
+    }
+    
+    // Try to import jose dynamically
+    let jose;
+    try {
+      jose = await import('jose');
+    } catch (e) {
+      return { attempted: true, error: 'jose library not available: ' + e.message };
+    }
+    
+    // Try HKDF key derivation
+    const secretKey = new TextEncoder().encode(secret);
+    
+    let derivedKey;
+    try {
+      derivedKey = await crypto.subtle.importKey(
+        'raw',
+        secretKey,
+        { name: 'HKDF' },
+        false,
+        ['deriveBits', 'deriveKey']
+      );
+    } catch (e) {
+      return { attempted: true, error: 'HKDF import failed: ' + e.message };
+    }
+    
+    let encryptionKey;
+    try {
+      encryptionKey = await crypto.subtle.deriveKey(
+        {
+          name: 'HKDF',
+          salt: new TextEncoder().encode(''),
+          info: new TextEncoder().encode('Auth.js Generated Encryption Key'),
+          hash: 'SHA-256',
+        },
+        derivedKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['decrypt']
+      );
+    } catch (e) {
+      return { attempted: true, error: 'Key derivation failed: ' + e.message };
+    }
+    
+    // Try to decrypt
+    try {
+      const { plaintext } = await jose.compactDecrypt(token, encryptionKey);
+      const payload = JSON.parse(new TextDecoder().decode(plaintext));
+      return { 
+        attempted: true, 
+        success: true, 
+        payload: {
+          userId: payload.userId || payload.sub,
+          email: payload.email,
+          name: payload.name,
+          exp: payload.exp,
+          iat: payload.iat,
+        },
+      };
+    } catch (e) {
+      return { 
+        attempted: true, 
+        error: 'Decrypt failed: ' + e.message,
+        tokenPreview: token.substring(0, 50) + '...',
+      };
+    }
+  } catch (e) {
+    return { attempted: true, error: 'Unexpected error: ' + e.message };
+  }
+}
 
 export async function GET(request) {
   const cookieHeader = request.headers.get('cookie') || '';
@@ -17,11 +112,16 @@ export async function GET(request) {
   const host = request.headers.get('host') || '';
   const referer = request.headers.get('referer') || '';
   
-  // Parse cookie names only (no values for security)
-  const cookieNames = cookieHeader
-    .split(';')
-    .map(c => c.trim().split('=')[0])
-    .filter(Boolean);
+  // Parse cookies
+  const cookies = Object.fromEntries(
+    cookieHeader.split(';').map(c => {
+      const [key, ...vals] = c.trim().split('=');
+      return [key, vals.join('=')];
+    }).filter(([k]) => k)
+  );
+  
+  // Cookie names only (no values for security)
+  const cookieNames = Object.keys(cookies);
   
   // Check for Auth.js session token specifically
   const isSecure = request.url?.startsWith('https://') || process.env.NODE_ENV === 'production';
@@ -29,7 +129,13 @@ export async function GET(request) {
   const sessionTokenName = `${cookiePrefix}authjs.session-token`;
   const sessionTokenFound = cookieNames.includes(sessionTokenName) || cookieNames.includes('authjs.session-token');
   
-  // Try to resolve session
+  // Get the actual session token for JWT debugging
+  const sessionToken = cookies[sessionTokenName] || cookies['authjs.session-token'] || null;
+  
+  // Debug JWT decode
+  const jwtDebug = await debugJwtDecode(sessionToken);
+  
+  // Try to resolve session using the main function
   let userId = null;
   let sessionError = null;
   let sessionExpires = null;
@@ -52,6 +158,8 @@ export async function GET(request) {
     sessionTokenFound,
     sessionError,
     sessionExpires,
+    // JWT debugging
+    jwtDebug,
     // Request metadata
     requestUrl: request.url,
     origin: origin || null,
@@ -59,6 +167,6 @@ export async function GET(request) {
     referer: referer || null,
     isSecure,
     nodeEnv: process.env.NODE_ENV || 'unknown',
+    authSecretSet: !!process.env.AUTH_SECRET,
   });
 }
-

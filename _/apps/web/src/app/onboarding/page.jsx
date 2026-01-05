@@ -46,13 +46,46 @@ export default function OnboardingPage() {
         
         // Step 1: Fetch businesses - this also gives us the userId
         // Server determines user from Auth.js session cookies
-        const { businesses, userId: sessionUserId } = await fetchUserBusinessesWithUser();
+        const result = await fetchUserBusinessesWithUser();
+        const { businesses, userId: sessionUserId, error: fetchError, httpStatus, created } = result;
         
-        console.log('[onboarding] Got', businesses.length, 'businesses, userId:', sessionUserId);
+        console.log('[onboarding] Got', businesses.length, 'businesses, userId:', sessionUserId, {
+          error: fetchError,
+          httpStatus,
+          created,
+        });
         
-        // If no session, user needs to log in
+        // Handle different error states
+        if (fetchError === 'unauthorized') {
+          // 401/403 - user needs to log in
+          console.log('[onboarding] Not authenticated (401/403) - user needs to log in');
+          setError('Přihlaste se prosím pro pokračování.');
+          setSessionLoading(false);
+          return;
+        }
+        
+        if (fetchError === 'server_error') {
+          // 500 - server error, but user might be authenticated
+          console.error('[onboarding] Server error fetching businesses');
+          setError('Nastala chyba serveru. Zkuste to prosím znovu.');
+          // If we got a userId from the error response, set it
+          if (sessionUserId) {
+            setUserId(sessionUserId);
+          }
+          setSessionLoading(false);
+          return;
+        }
+        
+        if (fetchError === 'network_error') {
+          console.error('[onboarding] Network error fetching businesses');
+          setError('Nepodařilo se připojit k serveru. Zkontrolujte připojení.');
+          setSessionLoading(false);
+          return;
+        }
+        
+        // If no userId but also no specific error, treat as not authenticated
         if (!sessionUserId) {
-          console.log('[onboarding] No session - user needs to log in');
+          console.log('[onboarding] No userId in response - user needs to log in');
           setError('Přihlaste se prosím pro pokračování.');
           setSessionLoading(false);
           return;
@@ -61,7 +94,7 @@ export default function OnboardingPage() {
         setUserId(sessionUserId);
 
         // With race-safe auto-create on GET /api/businesses, this should be extremely rare.
-        // If it happens, do NOT show a create button; just let the user retry.
+        // If it happens, do NOT show "please sign in" - just let the user retry.
         if (businesses.length === 0) {
           console.warn('[onboarding] businesses[] empty after /api/businesses; showing retry');
           setEmptyBusinesses(true);
