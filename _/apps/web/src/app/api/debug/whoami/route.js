@@ -15,11 +15,10 @@ import { getSessionFromRequest } from "../../../../auth.js";
 /**
  * Derive encryption key using HKDF (matches Auth.js implementation)
  */
-async function deriveEncryptionKey(secret, salt = '') {
+async function deriveEncryptionKey(secret) {
   const encoder = new TextEncoder();
   const secretBytes = encoder.encode(secret);
-  const saltBytes = encoder.encode(salt);
-  const info = encoder.encode(salt ? `Auth.js Generated Encryption Key (${salt})` : 'Auth.js Generated Encryption Key');
+  const info = encoder.encode('Auth.js Generated Encryption Key');
   
   const baseKey = await crypto.subtle.importKey(
     'raw',
@@ -29,12 +28,12 @@ async function deriveEncryptionKey(secret, salt = '') {
     ['deriveBits']
   );
   
-  // Derive 64 bytes (512 bits) for A256CBC-HS512 using SHA-512
+  // Auth.js uses SHA-256, 64 bytes for A256CBC-HS512
   const derivedBits = await crypto.subtle.deriveBits(
     {
       name: 'HKDF',
-      hash: 'SHA-512', // Auth.js uses SHA-512
-      salt: saltBytes,
+      hash: 'SHA-256',
+      salt: new Uint8Array(0),
       info: info,
     },
     baseKey,

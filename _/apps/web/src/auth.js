@@ -406,18 +406,17 @@ export function createAuthConfig() {
   }
 }
 
+
 /**
- * Derive encryption key using HKDF (matches Auth.js implementation)
- * Auth.js uses @panva/hkdf with SHA-512 hash
+ * Decode JWT using jose library with proper Auth.js key derivation
+ * Uses the @panva/hkdf compatible approach
  */
-async function deriveEncryptionKey(secret, salt = '') {
+async function getDerivedEncryptionKey(secret) {
   const encoder = new TextEncoder();
+  // Auth.js uses empty salt and specific info string
   const secretBytes = encoder.encode(secret);
-  const saltBytes = encoder.encode(salt);
-  // Auth.js uses this info format with salt included
-  const info = encoder.encode(salt ? `Auth.js Generated Encryption Key (${salt})` : 'Auth.js Generated Encryption Key');
+  const info = encoder.encode('Auth.js Generated Encryption Key');
   
-  // Import secret as HKDF key
   const baseKey = await crypto.subtle.importKey(
     'raw',
     secretBytes,
@@ -426,12 +425,12 @@ async function deriveEncryptionKey(secret, salt = '') {
     ['deriveBits']
   );
   
-  // Derive 64 bytes (512 bits) for A256CBC-HS512 using SHA-512
+  // Auth.js uses SHA-256 for HKDF (not SHA-512)
   const derivedBits = await crypto.subtle.deriveBits(
     {
       name: 'HKDF',
-      hash: 'SHA-512', // Auth.js uses SHA-512
-      salt: saltBytes,
+      hash: 'SHA-256',
+      salt: new Uint8Array(0),
       info: info,
     },
     baseKey,
@@ -442,43 +441,11 @@ async function deriveEncryptionKey(secret, salt = '') {
 }
 
 /**
- * Decode and verify a JWT token from Auth.js
- * Returns the payload if valid, null otherwise
- */
-async function decodeAuthJsToken(token) {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) {
-    console.error('[decodeAuthJsToken] AUTH_SECRET not set');
-    return null;
-  }
-  
-  try {
-    // Derive the encryption key (same as Auth.js)
-    const encryptionKey = await deriveEncryptionKey(secret);
-    
-    // Use jose.jwtDecrypt with the derived key
-    const { payload } = await jose.jwtDecrypt(token, encryptionKey, {
-      clockTolerance: 15, // 15 seconds tolerance
-    });
-    
-    // Check expiration
-    if (payload.exp && payload.exp * 1000 < Date.now()) {
-      return null;
-    }
-    
-    return payload;
-  } catch (error) {
-    console.error('[decodeAuthJsToken] Decode error:', error.message);
-    return null;
-  }
-}
-
-/**
  * Get session from a Request object - works in React Router resource routes
  * This doesn't require Hono context, so it works on Vercel serverless functions
  * 
  * Supports both:
- * - JWT sessions (Credentials provider) - decodes JWT token
+ * - JWT sessions (Credentials provider) - decodes JWT token using jose
  * - Database sessions (OAuth providers) - queries database
  */
 export async function getSessionFromRequest(request) {
@@ -501,19 +468,38 @@ export async function getSessionFromRequest(request) {
     return null;
   }
   
-  // Try JWT decode first (for Credentials provider)
-  const jwtPayload = await decodeAuthJsToken(sessionToken);
-  if (jwtPayload?.userId) {
-    // Valid JWT - return session from JWT payload
-    return {
-      user: {
-        id: jwtPayload.userId,
-        name: jwtPayload.name || null,
-        email: jwtPayload.email || null,
-        image: jwtPayload.picture || null,
-      },
-      expires: jwtPayload.exp ? new Date(jwtPayload.exp * 1000).toISOString() : null,
-    };
+  // Try JWT decode using jose.jwtDecrypt
+  const secret = process.env.AUTH_SECRET;
+  if (secret) {
+    try {
+      const encryptionKey = await getDerivedEncryptionKey(secret);
+      const { payload } = await jose.jwtDecrypt(sessionToken, encryptionKey, {
+        clockTolerance: 15,
+      });
+      
+      // Check if expired
+      if (payload.exp && payload.exp * 1000 < Date.now()) {
+        return null;
+      }
+      
+      // Auth.js stores userId in different fields depending on version
+      const userId = payload.userId || payload.sub || payload.id;
+      
+      if (userId) {
+        return {
+          user: {
+            id: userId,
+            name: payload.name || null,
+            email: payload.email || null,
+            image: payload.picture || payload.image || null,
+          },
+          expires: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+        };
+      }
+    } catch (jwtError) {
+      // JWT decryption failed - try database lookup
+      console.log('[getSessionFromRequest] JWT decode failed:', jwtError.message);
+    }
   }
   
   // Fallback to database session lookup (for OAuth providers or legacy sessions)
