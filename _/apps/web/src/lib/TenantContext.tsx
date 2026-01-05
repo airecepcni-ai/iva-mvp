@@ -121,10 +121,16 @@ export function TenantProvider({ children }: TenantProviderProps) {
       const { businesses: fetchedBusinesses, userId } = await fetchUserBusinessesWithUser();
       const fetchMs = perfNow() - tFetch0;
       
+      // Enhanced debug logging
       console.log('[TenantProvider] Loaded businesses:', {
         userId,
         count: fetchedBusinesses.length,
         lastUserId: lastUserIdRef.current,
+        businesses: fetchedBusinesses.map(b => ({
+          id: b.id,
+          name: b.name,
+          isSubscribed: b.isSubscribed ?? b.is_subscribed,
+        })),
       });
       
       // Check if user changed

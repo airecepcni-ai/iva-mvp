@@ -135,11 +135,19 @@ export async function fetchUserBusinessesWithUser(): Promise<FetchBusinessesResu
   const data = await res.json();
   const businesses = data?.businesses || [];
   const userId = data?.userId || null;
+  const created = data?.created || false;
   
-  console.log('[fetchUserBusinesses] Loaded', businesses.length, 'businesses for user', userId);
+  // Enhanced debug logging
+  console.log('[fetchUserBusinesses] Loaded', businesses.length, 'businesses for user', userId, {
+    created,
+    firstBusinessId: businesses[0]?.id || null,
+    firstBusinessName: businesses[0]?.name || null,
+    firstBusinessIsSubscribed: businesses[0]?.isSubscribed ?? null,
+  });
+  
   if (process.env.NODE_ENV !== 'production') {
     console.log(
-      `[perf] /api/businesses ${Math.round(perfNow() - t0)}ms status=200 businesses=${businesses.length}`
+      `[perf] /api/businesses ${Math.round(perfNow() - t0)}ms status=200 businesses=${businesses.length} created=${created}`
     );
   }
 

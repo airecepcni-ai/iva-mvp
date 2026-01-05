@@ -3,7 +3,7 @@
  * POST /api/businesses - Create a new business for authenticated user
  * 
  * IMPORTANT: GET auto-creates a default business if the user has none.
- * Uses simple idempotent pattern (no transactions/advisory locks).
+ * Uses PostgreSQL advisory lock to ensure idempotent, race-safe creation.
  */
 import sql from "../utils/sql.js";
 import { getSessionFromRequest } from "../../../auth.js";
@@ -41,6 +41,37 @@ function checkEnvVars() {
   }
   
   return missing;
+}
+
+/**
+ * Convert userId UUID string to a stable 32-bit integer for pg_advisory_xact_lock.
+ * Uses a simple hash of the UUID.
+ */
+function userIdToLockKey(userId) {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    const char = userId.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  // Ensure positive and within safe integer range
+  return Math.abs(hash) % 2147483647;
+}
+
+/**
+ * Map business row from DB to response format (snake_case → camelCase)
+ */
+function mapBusiness(b, clientTimezone) {
+  return {
+    id: b.id,
+    name: b.name || 'Můj Salon',
+    authUserId: b.auth_user_id || b.owner_id,
+    timezone: b.timezone || clientTimezone,
+    phone: b.phone || null,
+    vapiPhone: b.vapi_phone || null,
+    isSubscribed: b.is_subscribed === true,
+    stripeCustomerId: b.stripe_customer_id || null,
+  };
 }
 
 export async function GET(request) {
@@ -89,42 +120,29 @@ export async function GET(request) {
     }, { status: 401 });
   }
 
-  // ========== STEP 3: Database operations ==========
+  // ========== STEP 3: Database operations with advisory lock ==========
   const clientTimezone = request.headers.get('x-client-timezone') || 'Europe/Prague';
   
   try {
-    // STEP 3a: Select businesses for this user
-    debugLog('Selecting businesses for userId:', userId);
+    // Use transaction with advisory lock for race-safe auto-create
+    debugLog('Starting transaction with advisory lock for userId:', userId);
     
-    let businesses = await sql`
-      SELECT 
-        id,
-        name,
-        auth_user_id,
-        timezone,
-        phone,
-        vapi_phone,
-        is_subscribed,
-        stripe_customer_id,
-        stripe_subscription_id,
-        stripe_price_id,
-        created_at
-      FROM businesses
-      WHERE auth_user_id = ${userId}
-      ORDER BY created_at ASC
-    `;
-
-    debugLog('Found businesses (auth_user_id):', businesses.length);
-
-    // STEP 3b: Check legacy owner_id if none found
-    if (businesses.length === 0) {
-      debugLog('Checking legacy owner_id...');
+    const result = await sql.transaction(async (tx) => {
+      // Acquire advisory lock for this user (prevents concurrent auto-creates)
+      const lockKey = userIdToLockKey(userId);
+      debugLog('Acquiring advisory lock:', { lockKey, userId });
       
-      businesses = await sql`
+      await tx`SELECT pg_advisory_xact_lock(${lockKey})`;
+      debugLog('Advisory lock acquired');
+      
+      // STEP 3a: Select businesses for this user
+      debugLog('Selecting businesses for userId:', userId);
+      
+      let businesses = await tx`
         SELECT 
           id,
           name,
-          owner_id,
+          auth_user_id,
           timezone,
           phone,
           vapi_phone,
@@ -134,33 +152,56 @@ export async function GET(request) {
           stripe_price_id,
           created_at
         FROM businesses
-        WHERE owner_id = ${userId}
+        WHERE auth_user_id = ${userId}
         ORDER BY created_at ASC
       `;
 
-      debugLog('Found businesses (owner_id):', businesses.length);
+      debugLog('Found businesses (auth_user_id):', businesses.length);
 
-      // Migrate to auth_user_id if found via owner_id
-      if (businesses.length > 0) {
-        debugLog('Migrating businesses to auth_user_id...');
-        for (const biz of businesses) {
-          await sql`
-            UPDATE businesses 
-            SET auth_user_id = ${userId}
-            WHERE id = ${biz.id} AND auth_user_id IS NULL
-          `;
+      // STEP 3b: Check legacy owner_id if none found
+      if (businesses.length === 0) {
+        debugLog('Checking legacy owner_id...');
+        
+        businesses = await tx`
+          SELECT 
+            id,
+            name,
+            owner_id,
+            timezone,
+            phone,
+            vapi_phone,
+            is_subscribed,
+            stripe_customer_id,
+            stripe_subscription_id,
+            stripe_price_id,
+            created_at
+          FROM businesses
+          WHERE owner_id = ${userId}
+          ORDER BY created_at ASC
+        `;
+
+        debugLog('Found businesses (owner_id):', businesses.length);
+
+        // Migrate to auth_user_id if found via owner_id
+        if (businesses.length > 0) {
+          debugLog('Migrating businesses to auth_user_id...');
+          for (const biz of businesses) {
+            await tx`
+              UPDATE businesses 
+              SET auth_user_id = ${userId}
+              WHERE id = ${biz.id} AND auth_user_id IS NULL
+            `;
+          }
+          debugLog('Migration complete');
         }
-        debugLog('Migration complete');
       }
-    }
 
-    // STEP 3c: Auto-create default business if none exist
-    let created = false;
-    if (businesses.length === 0) {
-      debugLog('No businesses found - auto-creating default business...');
-      
-      try {
-        const insertResult = await sql`
+      // STEP 3c: Auto-create default business if none exist (inside transaction lock)
+      let created = false;
+      if (businesses.length === 0) {
+        debugLog('No businesses found - auto-creating default business...');
+        
+        const insertResult = await tx`
           INSERT INTO businesses (owner_id, auth_user_id, name, timezone, is_subscribed, created_at)
           VALUES (NULL, ${userId}, ${'Můj nový salon'}, ${clientTimezone}, false, NOW())
           RETURNING id, name, auth_user_id, timezone, phone, vapi_phone, is_subscribed, created_at
@@ -171,41 +212,20 @@ export async function GET(request) {
           businesses = insertResult;
           debugLog('Created default business:', insertResult[0].id);
         }
-      } catch (insertErr) {
-        // Insert might fail due to race condition - re-select to check
-        debugLog('Insert failed (possibly race condition):', insertErr.message);
-        
-        businesses = await sql`
-          SELECT 
-            id, name, auth_user_id, timezone, phone, vapi_phone, is_subscribed,
-            stripe_customer_id, stripe_subscription_id, stripe_price_id, created_at
-          FROM businesses
-          WHERE auth_user_id = ${userId}
-          ORDER BY created_at ASC
-        `;
-        
-        debugLog('Re-selected businesses after failed insert:', businesses.length);
       }
-    }
+
+      return { businesses, created };
+    });
 
     // STEP 3d: Map and return businesses
     debugLog('Mapping businesses for response...');
     
-    const mappedBusinesses = businesses.map((b) => ({
-      id: b.id,
-      name: b.name || 'Můj Salon',
-      authUserId: b.auth_user_id || b.owner_id,
-      timezone: b.timezone || clientTimezone,
-      phone: b.phone || null,
-      vapiPhone: b.vapi_phone || null,
-      isSubscribed: b.is_subscribed === true,
-      stripeCustomerId: b.stripe_customer_id || null,
-    }));
+    const mappedBusinesses = result.businesses.map((b) => mapBusiness(b, clientTimezone));
 
     debugLog('Response ready:', {
       userId,
       businessCount: mappedBusinesses.length,
-      created,
+      created: result.created,
       firstBusinessId: mappedBusinesses[0]?.id || null,
       firstBusinessIsSubscribed: mappedBusinesses[0]?.isSubscribed ?? null,
     });
@@ -214,7 +234,7 @@ export async function GET(request) {
       ok: true,
       businesses: mappedBusinesses,
       userId,
-      created,
+      created: result.created,
     });
 
   } catch (dbError) {

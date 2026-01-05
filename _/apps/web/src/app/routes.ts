@@ -130,6 +130,7 @@ const testAdapterRoute = route('api/debug/test-adapter', './api-test-adapter.ts'
 const businessesRoute = route('api/businesses', './api-businesses.ts');
 const subscriptionRoute = route('api/subscription', './api-subscription.ts');
 const debugWhoamiRoute = route('api/debug/whoami', './api-debug-whoami.ts');
+const debugBootstrapRoute = route('api/debug/bootstrap', './api-debug-bootstrap.ts');
 
 const routes = [
   authRoute,
@@ -138,6 +139,7 @@ const routes = [
   businessesRoute,
   subscriptionRoute,
   debugWhoamiRoute,
+  debugBootstrapRoute,
   ...generateRoutes(tree),
   notFound,
 ];
