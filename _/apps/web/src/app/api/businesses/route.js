@@ -1,49 +1,48 @@
 /**
  * GET /api/businesses - List businesses for authenticated user
  * POST /api/businesses - Create a new business for authenticated user
+ * 
+ * IMPORTANT: GET auto-creates a default business if the user has none.
+ * This is idempotent and uses advisory locks to prevent race conditions.
  */
 import sql from "../utils/sql.js";
 import { getSessionFromRequest } from "../../../auth.js";
+
+// Debug logging helper - only logs in non-production or when DEBUG_BUSINESSES is set
+function debugLog(...args) {
+  if (process.env.NODE_ENV !== 'production' || process.env.DEBUG_BUSINESSES === 'true') {
+    console.log('[api/businesses]', ...args);
+  }
+}
 
 export async function GET(request) {
   try {
     const session = await getSessionFromRequest(request);
     if (!session?.user?.id) {
-      return Response.json({ error: "Unauthorized", businesses: [], userId: null }, { status: 401 });
+      debugLog('No session - unauthorized');
+      return Response.json({ ok: false, error: "Unauthorized", businesses: [], userId: null }, { status: 401 });
     }
 
     const userId = session.user.id;
+    debugLog('userId:', userId);
 
     // Get client timezone from header (for auto-creating business with correct tz)
     const clientTimezone = request.headers.get('x-client-timezone') || 'Europe/Prague';
+    debugLog('clientTimezone:', clientTimezone);
 
-    // Get all businesses owned by this user (via auth_user_id column)
-    let businesses = await sql`
-      SELECT 
-        id,
-        name,
-        auth_user_id,
-        timezone,
-        phone,
-        vapi_phone,
-        is_subscribed,
-        stripe_customer_id,
-        stripe_subscription_id,
-        stripe_price_id,
-        created_at,
-        updated_at
-      FROM businesses
-      WHERE auth_user_id = ${userId}
-      ORDER BY created_at ASC
-    `;
+    // Use a transaction with advisory lock to prevent race conditions during auto-create
+    const result = await sql.transaction(async (tx) => {
+      // Advisory lock based on user ID hash to prevent concurrent auto-create for same user
+      // Using pg_advisory_xact_lock which auto-releases on transaction end
+      const lockKey = hashUserId(userId);
+      await tx`SELECT pg_advisory_xact_lock(${lockKey})`;
 
-    // If no businesses found, also check legacy owner_id column for backwards compatibility
-    if (businesses.length === 0) {
-      businesses = await sql`
+      // Get all businesses owned by this user (via auth_user_id column)
+      let businesses = await tx`
         SELECT 
           id,
           name,
-          owner_id,
+          auth_user_id,
           timezone,
           phone,
           vapi_phone,
@@ -54,23 +53,116 @@ export async function GET(request) {
           created_at,
           updated_at
         FROM businesses
-        WHERE owner_id = ${userId}
+        WHERE auth_user_id = ${userId}
         ORDER BY created_at ASC
       `;
 
-      // If found via owner_id, migrate them to auth_user_id
-      if (businesses.length > 0) {
-        for (const biz of businesses) {
-          await sql`
-            UPDATE businesses 
-            SET auth_user_id = ${userId}
-            WHERE id = ${biz.id} AND auth_user_id IS NULL
-          `;
+      debugLog('businesses count (auth_user_id):', businesses.length);
+
+      // If no businesses found, also check legacy owner_id column for backwards compatibility
+      if (businesses.length === 0) {
+        businesses = await tx`
+          SELECT 
+            id,
+            name,
+            owner_id,
+            timezone,
+            phone,
+            vapi_phone,
+            is_subscribed,
+            stripe_customer_id,
+            stripe_subscription_id,
+            stripe_price_id,
+            created_at,
+            updated_at
+          FROM businesses
+          WHERE owner_id = ${userId}
+          ORDER BY created_at ASC
+        `;
+
+        debugLog('businesses count (legacy owner_id):', businesses.length);
+
+        // If found via owner_id, migrate them to auth_user_id
+        if (businesses.length > 0) {
+          for (const biz of businesses) {
+            await tx`
+              UPDATE businesses 
+              SET auth_user_id = ${userId}
+              WHERE id = ${biz.id} AND auth_user_id IS NULL
+            `;
+          }
+          debugLog('migrated', businesses.length, 'businesses from owner_id to auth_user_id');
         }
       }
-    }
 
-    // Return mapped businesses
+      // If still no businesses, auto-create a default one
+      let created = false;
+      if (businesses.length === 0) {
+        debugLog('No businesses found - auto-creating default business');
+        
+        // Use SAVEPOINT for the insert to handle potential unique constraint violations gracefully
+        await tx`SAVEPOINT create_default_business`;
+        
+        try {
+          // Insert default business with owner_id = NULL (new auth model uses auth_user_id)
+          const insertResult = await tx`
+            INSERT INTO public.businesses (owner_id, auth_user_id, name, timezone, is_subscribed, created_at, updated_at)
+            VALUES (NULL, ${userId}, ${'Můj nový salon'}, ${clientTimezone}, false, NOW(), NOW())
+            RETURNING id
+          `;
+          
+          await tx`RELEASE SAVEPOINT create_default_business`;
+          
+          if (insertResult.length > 0) {
+            created = true;
+            debugLog('Created default business with id:', insertResult[0].id);
+          }
+        } catch (insertError) {
+          // Rollback to savepoint on error (e.g., race condition where another request created it)
+          await tx`ROLLBACK TO SAVEPOINT create_default_business`;
+          debugLog('Insert failed (likely race condition), will re-select:', insertError.message);
+        }
+
+        // Re-select to get the (possibly just-created) businesses
+        businesses = await tx`
+          SELECT 
+            id,
+            name,
+            auth_user_id,
+            timezone,
+            phone,
+            vapi_phone,
+            is_subscribed,
+            stripe_customer_id,
+            stripe_subscription_id,
+            stripe_price_id,
+            created_at,
+            updated_at
+          FROM businesses
+          WHERE auth_user_id = ${userId}
+          ORDER BY created_at ASC
+        `;
+        
+        debugLog('businesses count after auto-create:', businesses.length);
+      }
+
+      return { businesses, created };
+    });
+
+    const { businesses, created } = result;
+
+    // Log summary for debugging
+    const selectedBusinessId = businesses.length > 0 ? businesses[0].id : null;
+    const firstBusinessIsSubscribed = businesses.length > 0 ? businesses[0].is_subscribed : null;
+    debugLog('Summary:', {
+      userId,
+      businessCount: businesses.length,
+      selectedBusinessId,
+      is_subscribed: firstBusinessIsSubscribed,
+      created,
+    });
+
+    // Return mapped businesses with consistent camelCase
     const mappedBusinesses = businesses.map((b) => ({
       id: b.id,
       name: b.name || 'Můj Salon',
@@ -83,12 +175,14 @@ export async function GET(request) {
     }));
 
     return Response.json({
+      ok: true,
       businesses: mappedBusinesses,
       userId,
+      created,
     });
   } catch (error) {
     console.error("GET /api/businesses error:", error);
-    return Response.json({ error: "Internal Server Error", businesses: [], userId: null }, { status: 500 });
+    return Response.json({ ok: false, error: "Internal Server Error", businesses: [], userId: null }, { status: 500 });
   }
 }
 
@@ -137,6 +231,12 @@ export async function POST(request) {
 
     const newBusiness = result[0];
 
+    debugLog('Created business via POST:', {
+      userId,
+      businessId: newBusiness.id,
+      name: newBusiness.name,
+    });
+
     return Response.json({
       ok: true,
       userId,
@@ -154,4 +254,18 @@ export async function POST(request) {
     console.error("POST /api/businesses error:", error);
     return Response.json({ ok: false, error: "Internal Server Error", userId: null }, { status: 500 });
   }
+}
+
+/**
+ * Hash user ID to a 32-bit integer for advisory lock.
+ * Uses a simple but effective string hash.
+ */
+function hashUserId(userId) {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    const char = userId.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash);
 }

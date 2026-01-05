@@ -1,20 +1,101 @@
 /**
  * GET /api/subscription - Get subscription status for authenticated user
+ * 
+ * Query params:
+ * - businessId (optional): If provided, returns subscription for that specific business
+ *   and enforces that the user owns that business.
+ *   If not provided, returns subscription status across all user's businesses.
  */
 import sql from "../utils/sql.js";
 import { getSessionFromRequest } from "../../../auth.js";
+
+// Debug logging helper - only logs in non-production or when DEBUG_SUBSCRIPTION is set
+function debugLog(...args) {
+  if (process.env.NODE_ENV !== 'production' || process.env.DEBUG_SUBSCRIPTION === 'true') {
+    console.log('[api/subscription]', ...args);
+  }
+}
 
 export async function GET(request) {
   try {
     const session = await getSessionFromRequest(request);
     if (!session?.user?.id) {
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
+      debugLog('No session - unauthorized');
+      return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
     const userId = session.user.id;
+    const url = new URL(request.url);
+    const businessId = url.searchParams.get('businessId');
 
+    debugLog('userId:', userId, 'businessId:', businessId);
+
+    // If businessId is provided, check ownership and return subscription for that specific business
+    if (businessId) {
+      const businessRows = await sql`
+        SELECT 
+          id,
+          name,
+          auth_user_id,
+          owner_id,
+          is_subscribed,
+          stripe_customer_id,
+          stripe_subscription_id,
+          stripe_price_id,
+          stripe_subscription_status
+        FROM businesses
+        WHERE id = ${businessId}
+        LIMIT 1
+      `;
+
+      debugLog('Business lookup result:', businessRows.length > 0 ? 'found' : 'not found');
+
+      if (businessRows.length === 0) {
+        debugLog('Business not found:', businessId);
+        return Response.json({ 
+          ok: false, 
+          error: "business_not_found" 
+        }, { status: 404 });
+      }
+
+      const business = businessRows[0];
+      const businessOwner = business.auth_user_id || business.owner_id;
+
+      // Check ownership
+      if (businessOwner !== userId) {
+        debugLog('Ownership check failed - business owner:', businessOwner, 'session user:', userId);
+        return Response.json({ 
+          ok: false, 
+          error: "forbidden",
+          message: "You do not own this business"
+        }, { status: 403 });
+      }
+
+      const isSubscribed = business.is_subscribed === true;
+      
+      debugLog('Business subscription check:', {
+        businessId: business.id,
+        businessName: business.name,
+        isSubscribed,
+        stripeStatus: business.stripe_subscription_status,
+      });
+
+      return Response.json({
+        ok: true,
+        userId,
+        businessId: business.id,
+        businessName: business.name,
+        isSubscribed,
+        stripeCustomerId: business.stripe_customer_id || null,
+        stripeSubscriptionId: business.stripe_subscription_id || null,
+        stripePriceId: business.stripe_price_id || null,
+        stripeSubscriptionStatus: business.stripe_subscription_status || null,
+      });
+    }
+
+    // No businessId provided - return subscription status across all user's businesses
     // Get all businesses for this user
-    const businesses = await sql`
+    let businesses = await sql`
       SELECT 
         id,
         name,
@@ -29,9 +110,8 @@ export async function GET(request) {
     `;
 
     // Also check legacy owner_id
-    let allBusinesses = businesses;
     if (businesses.length === 0) {
-      allBusinesses = await sql`
+      businesses = await sql`
         SELECT 
           id,
           name,
@@ -46,7 +126,9 @@ export async function GET(request) {
       `;
     }
 
-    const mappedBusinesses = allBusinesses.map((b) => ({
+    debugLog('Found', businesses.length, 'businesses for user');
+
+    const mappedBusinesses = businesses.map((b) => ({
       id: b.id,
       name: b.name,
       isSubscribed: b.is_subscribed === true,
@@ -58,6 +140,13 @@ export async function GET(request) {
 
     // User is subscribed if ANY of their businesses has an active subscription
     const isSubscribed = mappedBusinesses.some((b) => b.isSubscribed);
+
+    debugLog('Overall subscription status:', {
+      userId,
+      businessCount: mappedBusinesses.length,
+      isSubscribed,
+      subscribedBusinesses: mappedBusinesses.filter(b => b.isSubscribed).map(b => b.id),
+    });
 
     return Response.json({
       ok: true,
@@ -71,6 +160,6 @@ export async function GET(request) {
     });
   } catch (error) {
     console.error("GET /api/subscription error:", error);
-    return Response.json({ error: "Internal Server Error" }, { status: 500 });
+    return Response.json({ ok: false, error: "Internal Server Error" }, { status: 500 });
   }
 }
