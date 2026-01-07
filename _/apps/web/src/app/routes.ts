@@ -136,6 +136,10 @@ const debugSubscriptionSnapshotRoute = route(
   './api-debug-subscription-snapshot.ts'
 );
 
+// Vapi proxy routes for Vercel deployment (ensures POST doesn't fall through to :splat* 405)
+const vapiRoute = route('vapi/*', './vapi-proxy.ts');
+const apiVapiRoute = route('api/vapi/*', './vapi-proxy.ts');
+
 const routes = [
   authRoute,
   debugAuthRoute,
@@ -145,6 +149,8 @@ const routes = [
   debugWhoamiRoute,
   debugBootstrapRoute,
   debugSubscriptionSnapshotRoute,
+  vapiRoute,
+  apiVapiRoute,
   ...generateRoutes(tree),
   notFound,
 ];

@@ -3,6 +3,14 @@
   "framework": "react-router",
   "rewrites": [
     {
+      "source": "/vapi/:path*",
+      "destination": "https://iva-backendmvp-production.up.railway.app/vapi/:path*"
+    },
+    {
+      "source": "/api/vapi/:path*",
+      "destination": "https://iva-backendmvp-production.up.railway.app/api/vapi/:path*"
+    },
+    {
       "source": "/backend/:path*",
       "destination": "https://iva-backendmvp-production.up.railway.app/:path*"
     }
