@@ -342,10 +342,10 @@ export default function OnboardingPage() {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
             <input
-              type="url"
+              type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://example.com"
+              placeholder="example.com"
               disabled={loading || !isSubscribed}
               className="w-full px-4 py-4 rounded-xl bg-[#F9FAFB] dark:bg-[#0A0A0A] border border-[#E5E7EB] dark:border-gray-700 font-inter text-base text-[#111111] dark:text-white focus:outline-none focus:border-[#5A5BFF] dark:focus:border-[#6366FF] transition-colors disabled:opacity-50"
             />

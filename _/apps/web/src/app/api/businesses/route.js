@@ -150,23 +150,26 @@ export async function GET(request) {
 
   } catch (dbError) {
     // ========== DB ERROR HANDLING ==========
+    // Always log DB errors to help debug production issues
     console.error('[api/businesses] DB_ERROR:', {
       userId,
+      errorName: dbError.name,
       message: dbError.message,
-      stack: dbError.stack,
+      code: dbError.code,
+      stack: dbError.stack?.split('\n').slice(0, 5).join('\n'),
     });
 
+    // Include helpful debug info in response (safe subset)
     return noStoreResponse({
       ok: false,
       error: 'internal_server_error',
       businesses: [],
       userId,
-      ...(DEBUG ? {
-        debug: {
-          message: dbError.message,
-          stack: dbError.stack,
-        }
-      } : {}),
+      debug: {
+        errorType: dbError.name || 'Error',
+        message: dbError.message || 'Unknown database error',
+        code: dbError.code || null,
+      },
     }, 500);
   }
 }
