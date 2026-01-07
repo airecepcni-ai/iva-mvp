@@ -64,6 +64,7 @@ export async function GET(request) {
     );
   }
 
+  // NOTE: stripe_status column may not exist in all deployments
   let businesses = await sql`
     SELECT
       id,
@@ -74,8 +75,6 @@ export async function GET(request) {
       stripe_customer_id,
       stripe_subscription_id,
       stripe_price_id,
-      stripe_status,
-      stripe_subscription_status,
       stripe_current_period_end
     FROM businesses
     WHERE auth_user_id = ${userId}
@@ -93,8 +92,6 @@ export async function GET(request) {
         stripe_customer_id,
         stripe_subscription_id,
         stripe_price_id,
-        stripe_status,
-        stripe_subscription_status,
         stripe_current_period_end
       FROM businesses
       WHERE owner_id = ${userId}

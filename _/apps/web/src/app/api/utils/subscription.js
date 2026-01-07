@@ -76,6 +76,7 @@ export async function getSubscriptionInfo(authUserId) {
   }
 
   try {
+    // NOTE: stripe_status column may not exist in all deployments
     const rows = await sql`
       SELECT
         id,
@@ -84,8 +85,6 @@ export async function getSubscriptionInfo(authUserId) {
         stripe_customer_id,
         stripe_subscription_id,
         stripe_price_id,
-        stripe_status,
-        stripe_subscription_status,
         stripe_current_period_end
       FROM public.businesses
       WHERE auth_user_id = ${authUserId}
@@ -145,6 +144,7 @@ export async function getSubscriptionInfoByBusinessId(businessId) {
   }
 
   try {
+    // NOTE: stripe_status column may not exist in all deployments
     const businessRows = await sql`
       SELECT
         id,
@@ -155,8 +155,6 @@ export async function getSubscriptionInfoByBusinessId(businessId) {
         stripe_customer_id,
         stripe_subscription_id,
         stripe_price_id,
-        stripe_status,
-        stripe_subscription_status,
         stripe_current_period_end
       FROM public.businesses
       WHERE id = ${businessId}

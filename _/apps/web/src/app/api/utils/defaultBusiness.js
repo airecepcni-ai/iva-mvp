@@ -15,6 +15,8 @@ function userIdToLockKey(userId) {
 
 /** Select businesses for the user, including legacy owner_id rows. */
 async function selectBusinessesForUser(tx, userId) {
+  // NOTE: Only select columns that exist in the database
+  // stripe_status and stripe_subscription_status may not exist in all deployments
   const businesses = await tx`
     SELECT
       id,
@@ -28,8 +30,6 @@ async function selectBusinessesForUser(tx, userId) {
       stripe_customer_id,
       stripe_subscription_id,
       stripe_price_id,
-      stripe_status,
-      stripe_subscription_status,
       stripe_current_period_end,
       created_at
     FROM businesses
@@ -53,8 +53,6 @@ async function selectBusinessesForUser(tx, userId) {
       stripe_customer_id,
       stripe_subscription_id,
       stripe_price_id,
-      stripe_status,
-      stripe_subscription_status,
       stripe_current_period_end,
       created_at
     FROM businesses
@@ -93,8 +91,8 @@ export async function ensureDefaultBusinessForUser(userId, clientTimezone = DEFA
         INSERT INTO businesses (owner_id, auth_user_id, name, timezone, is_subscribed, created_at)
         VALUES (NULL, ${userId}, ${DEFAULT_BUSINESS_NAME}, ${clientTimezone}, false, NOW())
         RETURNING id, name, owner_id, auth_user_id, timezone, phone, vapi_phone, is_subscribed,
-          stripe_customer_id, stripe_subscription_id, stripe_price_id, stripe_status,
-          stripe_subscription_status, stripe_current_period_end, created_at
+          stripe_customer_id, stripe_subscription_id, stripe_price_id,
+          stripe_current_period_end, created_at
       `;
       if (insertResult.length > 0) {
         created = true;
