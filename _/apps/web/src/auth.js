@@ -9,6 +9,7 @@ import Google from "@auth/core/providers/google"
 import { Pool } from '@neondatabase/serverless'
 import { hash, verify } from 'argon2'
 import * as jose from 'jose'
+import { ensureDefaultBusinessForUser } from "./app/api/utils/defaultBusiness.js";
 
 const missingDatabaseError = new Error(
   'No database connection string was provided. Perhaps process.env.DATABASE_URL has not been set'
@@ -327,6 +328,25 @@ const sharedCallbacks = {
   },
 };
 
+const sharedEvents = {
+  async createUser({ user }) {
+    if (!user?.id) return;
+    try {
+      await ensureDefaultBusinessForUser(user.id);
+    } catch (err) {
+      console.error("[auth] createUser ensureDefaultBusinessForUser failed:", err);
+    }
+  },
+  async signIn({ user }) {
+    if (!user?.id) return;
+    try {
+      await ensureDefaultBusinessForUser(user.id);
+    } catch (err) {
+      console.error("[auth] signIn ensureDefaultBusinessForUser failed:", err);
+    }
+  },
+};
+
 // Auth.js configuration factory - used by Hono middleware
 export function createAuthConfig() {
   return {
@@ -346,6 +366,7 @@ export function createAuthConfig() {
       error: '/account/signin',
     },
     callbacks: sharedCallbacks,
+    events: sharedEvents,
     providers: [
       Google({
         clientId: process.env.GOOGLE_CLIENT_ID,
@@ -562,6 +583,7 @@ export const { auth } = CreateAuth({
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   callbacks: sharedCallbacks,
+  events: sharedEvents,
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,

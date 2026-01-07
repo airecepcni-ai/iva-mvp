@@ -42,3 +42,4 @@ When these are missing, DB routes throw a descriptive error, but the build & sta
 - [x] Hitting `/`, `/account/signin`, and `/dashboard` returns HTTP 200 (the app may redirect on auth-protected routes, but they should not crash).
 - [ ] Optional: hit a DB-backed route (for example `/api/auth-db-test`) once `DATABASE_URL` + `AUTH_SECRET` are set to confirm `getPool()` is invoked lazily instead of during build.
 
+

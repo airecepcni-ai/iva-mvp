@@ -29,6 +29,12 @@ export interface Business {
   // /api/businesses returns both snake_case and camelCase for compatibility
   is_subscribed?: boolean;
   isSubscribed?: boolean;
+  stripeCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
+  stripePriceId?: string | null;
+  stripeStatus?: string | null;
+  stripeSubscriptionStatus?: string | null;
+  stripeCurrentPeriodEnd?: string | null;
 }
 
 // localStorage key prefix - actual key is `iva_active_business_id:{userId}`
@@ -121,6 +127,7 @@ export async function fetchUserBusinessesWithUser(): Promise<FetchBusinessesResu
       'Content-Type': 'application/json',
       ...(clientTimezone ? { 'x-client-timezone': clientTimezone } : {}),
     },
+    cache: 'no-store',
   });
 
   if (!res.ok) {

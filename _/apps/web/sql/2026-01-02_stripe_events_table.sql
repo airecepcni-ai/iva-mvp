@@ -5,3 +5,4 @@ CREATE TABLE IF NOT EXISTS stripe_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+

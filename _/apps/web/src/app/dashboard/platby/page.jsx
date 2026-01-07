@@ -67,6 +67,7 @@ export default function PlatbyPage() {
       const res = await fetch(`/api/subscription?businessId=${businessId}`, {
         method: "GET",
         credentials: "include",
+        cache: "no-store",
       });
       const data = await res.json().catch(() => null);
 

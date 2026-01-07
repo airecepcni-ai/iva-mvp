@@ -6,6 +6,59 @@
 
 import sql from './sql';
 
+const ACTIVE_STATUS_SET = new Set(['active', 'trialing']);
+
+function parsePeriodEnd(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+/**
+ * Canonical compute helper for business-level subscription state.
+ */
+export function computeIsSubscribed(businessRow) {
+  if (!businessRow) return false;
+
+  if (businessRow.is_subscribed === true) {
+    return true;
+  }
+
+  const status = (
+    businessRow.stripe_status ||
+    businessRow.stripe_subscription_status ||
+    ''
+  )
+    .toString()
+    .toLowerCase();
+
+  if (status && ACTIVE_STATUS_SET.has(status)) {
+    return true;
+  }
+
+  const periodEnd = parsePeriodEnd(businessRow.stripe_current_period_end);
+  if (periodEnd && periodEnd.getTime() > Date.now()) {
+    return true;
+  }
+
+  return false;
+}
+
+function mapBusinessRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    isSubscribed: computeIsSubscribed(row),
+    stripeCustomerId: row.stripe_customer_id || null,
+    stripeSubscriptionId: row.stripe_subscription_id || null,
+    stripePriceId: row.stripe_price_id || null,
+    stripeStatus: row.stripe_status || null,
+    stripeSubscriptionStatus: row.stripe_subscription_status || null,
+    stripeCurrentPeriodEnd: row.stripe_current_period_end || null,
+  };
+}
+
 /**
  * Gets subscription info for an Auth.js user.
  * 
@@ -24,7 +77,16 @@ export async function getSubscriptionInfo(authUserId) {
 
   try {
     const rows = await sql`
-      SELECT id, name, is_subscribed
+      SELECT
+        id,
+        name,
+        is_subscribed,
+        stripe_customer_id,
+        stripe_subscription_id,
+        stripe_price_id,
+        stripe_status,
+        stripe_subscription_status,
+        stripe_current_period_end
       FROM public.businesses
       WHERE auth_user_id = ${authUserId}
       ORDER BY created_at ASC
@@ -46,13 +108,8 @@ export async function getSubscriptionInfo(authUserId) {
       };
     }
 
-    const businesses = rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      isSubscribed: row.is_subscribed === true,
-    }));
+    const businesses = rows.map((row) => mapBusinessRow(row));
 
-    // User is subscribed if ANY of their businesses has is_subscribed = true
     const isSubscribed = businesses.some((b) => b.isSubscribed);
 
     if (process.env.NODE_ENV !== 'production') {
@@ -88,9 +145,19 @@ export async function getSubscriptionInfoByBusinessId(businessId) {
   }
 
   try {
-    // First, get the auth_user_id for this business
     const businessRows = await sql`
-      SELECT auth_user_id
+      SELECT
+        id,
+        name,
+        auth_user_id,
+        owner_id,
+        is_subscribed,
+        stripe_customer_id,
+        stripe_subscription_id,
+        stripe_price_id,
+        stripe_status,
+        stripe_subscription_status,
+        stripe_current_period_end
       FROM public.businesses
       WHERE id = ${businessId}
       LIMIT 1
@@ -101,33 +168,17 @@ export async function getSubscriptionInfoByBusinessId(businessId) {
       return null;
     }
 
-    const authUserId = businessRows[0].auth_user_id;
-    
+    const biz = businessRows[0];
+    const authUserId = biz.auth_user_id || biz.owner_id || '';
+
     if (!authUserId) {
-      // Legacy/unclaimed business - check only this business
-      const singleBusinessRows = await sql`
-        SELECT id, name, is_subscribed
-        FROM public.businesses
-        WHERE id = ${businessId}
-      `;
-      
-      if (!singleBusinessRows || singleBusinessRows.length === 0) {
-        return null;
-      }
-      
-      const biz = singleBusinessRows[0];
       return {
         userId: '',
-        isSubscribed: biz.is_subscribed === true,
-        businesses: [{
-          id: biz.id,
-          name: biz.name,
-          isSubscribed: biz.is_subscribed === true,
-        }],
+        isSubscribed: computeIsSubscribed(biz),
+        businesses: [mapBusinessRow(biz)],
       };
     }
 
-    // Get subscription info for the user owning this business
     return getSubscriptionInfo(authUserId);
   } catch (error) {
     console.error('[getSubscriptionInfoByBusinessId] Database error:', error);

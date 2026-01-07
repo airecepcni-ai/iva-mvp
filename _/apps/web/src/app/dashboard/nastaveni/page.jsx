@@ -37,8 +37,11 @@ function NoBusinessBanner() {
   );
 }
 
+const DEBUG_SUBSCRIPTION = typeof window !== 'undefined' && 
+  (window.location.search.includes('debug=1') || localStorage.getItem('DEBUG_SUBSCRIPTION') === 'true');
+
 export default function SettingsPage() {
-  const { activeBusinessId, loading: tenantLoading, hasBusiness } = useTenant();
+  const { activeBusinessId, activeBusiness, loading: tenantLoading, hasBusiness } = useTenant();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -46,6 +49,24 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState(null);
   const [ivaSettings, setIvaSettings] = useState(null);
   const [profileMissing, setProfileMissing] = useState(false);
+  const [subscription, setSubscription] = useState(null);
+  
+  // Canonical subscription from TenantContext (from /api/businesses)
+  const isSubscribed = activeBusiness?.isSubscribed ?? activeBusiness?.is_subscribed ?? subscription?.isSubscribed ?? false;
+  
+  // Debug logging for subscription state
+  useEffect(() => {
+    if (DEBUG_SUBSCRIPTION && activeBusiness) {
+      console.log('[Nastavení] Subscription debug:', {
+        businessId: activeBusinessId,
+        'activeBusiness.isSubscribed': activeBusiness?.isSubscribed,
+        'activeBusiness.is_subscribed': activeBusiness?.is_subscribed,
+        'subscription?.isSubscribed': subscription?.isSubscribed,
+        'computed isSubscribed': isSubscribed,
+        source: activeBusiness?.isSubscribed !== undefined ? '/api/businesses' : '/api/business_profile',
+      });
+    }
+  }, [activeBusiness, subscription, activeBusinessId, isSubscribed]);
 
   const loadSettings = useCallback(async () => {
     // If no business, show empty form with defaults
@@ -84,6 +105,7 @@ export default function SettingsPage() {
         }
       );
       setIvaSettings(settings.iva);
+      setSubscription(settings.subscription || null);
     } catch (err) {
       console.error("Error fetching business settings:", err);
       setError(err?.message || "Nepodařilo se načíst nastavení podniku.");
@@ -127,6 +149,7 @@ export default function SettingsPage() {
       const updated = await fetchBusinessSettings(activeBusinessId);
       setProfile(updated.profile);
       setIvaSettings(updated.iva);
+      setSubscription(updated.subscription || null);
       
       // Clear success message after 3 seconds
       setTimeout(() => setSuccessMessage(null), 3000);
@@ -198,8 +221,8 @@ export default function SettingsPage() {
         {/* No business info banner */}
         {!hasBusiness && <NoBusinessBanner />}
 
-        {/* business_profile missing banner (non-fatal) */}
-        {hasBusiness && profileMissing && (
+        {/* business_profile missing banner (non-fatal) - only show if not subscribed */}
+        {hasBusiness && profileMissing && !isSubscribed && (
           <div className="mb-6 p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
             <div>

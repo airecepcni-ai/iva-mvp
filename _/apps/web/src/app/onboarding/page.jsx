@@ -19,6 +19,8 @@ import {
   selectBestBusinessId,
 } from "../../lib/tenant";
 
+const DEBUG_ONBOARDING = import.meta.env.VITE_DEBUG_ONBOARDING === "true";
+
 export default function OnboardingPage() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -111,6 +113,10 @@ export default function OnboardingPage() {
         
         // Validate stored ID is in user's businesses and select best one
         const activeBusinessId = selectBestBusinessId(businesses, storedBusinessId);
+
+        if (DEBUG_ONBOARDING) {
+          console.log('[onboarding-debug] userId:', sessionUserId, 'businessCount:', businesses.length, 'selectedBusinessId:', activeBusinessId, 'created:', created);
+        }
         
         if (!activeBusinessId) {
           console.error('[onboarding] Could not determine active business');
@@ -126,8 +132,10 @@ export default function OnboardingPage() {
         }
         
         const activeBusiness = businesses.find(b => b.id === activeBusinessId);
+        const computedIsSubscribed = Boolean(activeBusiness?.isSubscribed ?? activeBusiness?.is_subscribed);
         setBusinessId(activeBusinessId);
         setBusinessName(activeBusiness?.name || null);
+        setIsSubscribed(computedIsSubscribed);
         
         console.log('[onboarding] Active business:', activeBusinessId, activeBusiness?.name);
         
@@ -137,24 +145,27 @@ export default function OnboardingPage() {
           const subRes = await fetch(`/api/subscription?businessId=${activeBusinessId}`, {
             method: 'GET',
             credentials: 'include', // Send cookies for auth
+          cache: 'no-store',
           });
           
           console.log('[onboarding] Subscription response:', subRes.status);
           
-          if (subRes.ok) {
-            const subData = await subRes.json();
-            console.log('[onboarding] Subscription data:', subData);
-            
-            if (subData.ok) {
-              setIsSubscribed(subData.isSubscribed === true);
-              if (subData.businessName) {
-                setBusinessName(subData.businessName);
-              }
-            } else {
-              console.warn('[onboarding] Subscription check returned error:', subData.error);
-              setIsSubscribed(false);
+        if (subRes.ok) {
+          const subData = await subRes.json();
+          console.log('[onboarding] Subscription data:', subData);
+          
+          if (subData.ok) {
+            if (typeof subData.isSubscribed === 'boolean') {
+              setIsSubscribed(subData.isSubscribed);
             }
-          } else if (subRes.status === 403) {
+            if (subData.businessName) {
+              setBusinessName(subData.businessName);
+            }
+          } else {
+            console.warn('[onboarding] Subscription check returned error:', subData.error);
+            setIsSubscribed(false);
+          }
+        } else if (subRes.status === 403) {
             // Business doesn't belong to user - clear stored ID
             console.error('[onboarding] Business ownership check failed');
             clearStoredActiveBusinessId(sessionUserId);
@@ -170,7 +181,6 @@ export default function OnboardingPage() {
           }
         } catch (e) {
           console.error('[onboarding] Subscription check error:', e);
-          setIsSubscribed(false);
         }
         
         setSubscriptionChecked(true);

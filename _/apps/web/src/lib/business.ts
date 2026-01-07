@@ -110,6 +110,13 @@ export interface BusinessSettings {
   // profile can be null when backend has no business_profile row yet (non-fatal state)
   profile: BusinessProfile | null;
   iva: IvaSettings;
+  subscription: {
+    isSubscribed: boolean;
+    is_subscribed: boolean;
+    stripeStatus: string | null;
+    stripeSubscriptionStatus: string | null;
+    stripeCurrentPeriodEnd: string | null;
+  };
 }
 
 /**
@@ -184,6 +191,7 @@ export async function fetchBusinessSettings(businessId: string): Promise<Busines
       'Content-Type': 'application/json',
       'x-tenant-id': resolvedBusinessId,
     },
+    cache: 'no-store',
   });
   logPerfOnce('businessProfile.fetch', perfNow() - t0);
 
@@ -247,7 +255,9 @@ export async function fetchBusinessSettings(businessId: string): Promise<Busines
   // Make failures non-fatal - just log and use default
   let ivaEnabled = false;
   try {
-    const ivaRes = await fetch(`/api/iva-settings?businessId=${businessId}`);
+    const ivaRes = await fetch(`/api/iva-settings?businessId=${businessId}`, {
+      cache: 'no-store',
+    });
     if (ivaRes.ok) {
       const contentType = ivaRes.headers.get('content-type');
       if (contentType && contentType.includes('application/json')) {
@@ -276,7 +286,21 @@ export async function fetchBusinessSettings(businessId: string): Promise<Busines
       ivaEnabled,
   };
 
-  return { profile, iva };
+  const subscriptionRaw =
+    data?.subscription ||
+    data?.business ||
+    data?.business_profile ||
+    null;
+
+  const subscription = {
+    isSubscribed: Boolean(subscriptionRaw?.isSubscribed),
+    is_subscribed: subscriptionRaw?.is_subscribed === true,
+    stripeStatus: subscriptionRaw?.stripeStatus || null,
+    stripeSubscriptionStatus: subscriptionRaw?.stripeSubscriptionStatus || null,
+    stripeCurrentPeriodEnd: subscriptionRaw?.stripeCurrentPeriodEnd || null,
+  };
+
+  return { profile, iva, subscription };
 }
 
 /**

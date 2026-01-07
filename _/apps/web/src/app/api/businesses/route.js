@@ -7,9 +7,16 @@
  */
 import sql from "../utils/sql.js";
 import { getSessionFromRequest } from "../../../auth.js";
+import { computeIsSubscribed } from "../utils/subscription.js";
+import { ensureDefaultBusinessForUser } from "../utils/defaultBusiness.js";
 
 // Debug flag - set DEBUG_BUSINESSES=true to enable verbose logging
 const DEBUG = process.env.DEBUG_BUSINESSES === 'true';
+const NO_STORE_HEADERS = { 'Cache-Control': 'no-store' };
+
+function noStoreResponse(body, status = 200) {
+  return Response.json(body, { status, headers: NO_STORE_HEADERS });
+}
 
 function debugLog(...args) {
   if (DEBUG) {
@@ -47,17 +54,6 @@ function checkEnvVars() {
  * Convert userId UUID string to a stable 32-bit integer for pg_advisory_xact_lock.
  * Uses a simple hash of the UUID.
  */
-function userIdToLockKey(userId) {
-  let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    const char = userId.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  // Ensure positive and within safe integer range
-  return Math.abs(hash) % 2147483647;
-}
-
 /**
  * Map business row from DB to response format (snake_case → camelCase)
  */
@@ -69,8 +65,14 @@ function mapBusiness(b, clientTimezone) {
     timezone: b.timezone || clientTimezone,
     phone: b.phone || null,
     vapiPhone: b.vapi_phone || null,
-    isSubscribed: b.is_subscribed === true,
+    isSubscribed: computeIsSubscribed(b),
+    is_subscribed: b.is_subscribed === true,
     stripeCustomerId: b.stripe_customer_id || null,
+    stripeSubscriptionId: b.stripe_subscription_id || null,
+    stripePriceId: b.stripe_price_id || null,
+    stripeStatus: b.stripe_status || null,
+    stripeSubscriptionStatus: b.stripe_subscription_status || null,
+    stripeCurrentPeriodEnd: b.stripe_current_period_end || null,
   };
 }
 
@@ -80,13 +82,13 @@ export async function GET(request) {
   if (missingEnvVars.length > 0) {
     const errorMsg = `Missing required env vars: ${missingEnvVars.join(', ')}`;
     console.error('[api/businesses] ENV_ERROR:', errorMsg);
-    return Response.json({
+    return noStoreResponse({
       ok: false,
       error: 'server_misconfigured',
       message: errorMsg,
       businesses: [],
       userId: null,
-    }, { status: 500 });
+    }, 500);
   }
 
   // ========== STEP 2: Resolve session/userId FIRST ==========
@@ -111,115 +113,24 @@ export async function GET(request) {
   // If no userId, return 401 immediately (don't touch DB)
   if (!userId) {
     debugLog('No userId - returning 401', { sessionError: sessionError?.message });
-    return Response.json({
+    return noStoreResponse({
       ok: false,
       error: 'unauthorized',
       businesses: [],
       userId: null,
       ...(DEBUG ? { debug: { sessionError: sessionError?.message || 'No session token found' } } : {}),
-    }, { status: 401 });
+    }, 401);
   }
 
   // ========== STEP 3: Database operations with advisory lock ==========
   const clientTimezone = request.headers.get('x-client-timezone') || 'Europe/Prague';
   
   try {
-    // Use transaction with advisory lock for race-safe auto-create
-    debugLog('Starting transaction with advisory lock for userId:', userId);
-    
-    const result = await sql.transaction(async (tx) => {
-      // Acquire advisory lock for this user (prevents concurrent auto-creates)
-      const lockKey = userIdToLockKey(userId);
-      debugLog('Acquiring advisory lock:', { lockKey, userId });
-      
-      await tx`SELECT pg_advisory_xact_lock(${lockKey})`;
-      debugLog('Advisory lock acquired');
-      
-      // STEP 3a: Select businesses for this user
-      debugLog('Selecting businesses for userId:', userId);
-      
-      let businesses = await tx`
-        SELECT 
-          id,
-          name,
-          auth_user_id,
-          timezone,
-          phone,
-          vapi_phone,
-          is_subscribed,
-          stripe_customer_id,
-          stripe_subscription_id,
-          stripe_price_id,
-          created_at
-        FROM businesses
-        WHERE auth_user_id = ${userId}
-        ORDER BY created_at ASC
-      `;
-
-      debugLog('Found businesses (auth_user_id):', businesses.length);
-
-      // STEP 3b: Check legacy owner_id if none found
-      if (businesses.length === 0) {
-        debugLog('Checking legacy owner_id...');
-        
-        businesses = await tx`
-          SELECT 
-            id,
-            name,
-            owner_id,
-            timezone,
-            phone,
-            vapi_phone,
-            is_subscribed,
-            stripe_customer_id,
-            stripe_subscription_id,
-            stripe_price_id,
-            created_at
-          FROM businesses
-          WHERE owner_id = ${userId}
-          ORDER BY created_at ASC
-        `;
-
-        debugLog('Found businesses (owner_id):', businesses.length);
-
-        // Migrate to auth_user_id if found via owner_id
-        if (businesses.length > 0) {
-          debugLog('Migrating businesses to auth_user_id...');
-          for (const biz of businesses) {
-            await tx`
-              UPDATE businesses 
-              SET auth_user_id = ${userId}
-              WHERE id = ${biz.id} AND auth_user_id IS NULL
-            `;
-          }
-          debugLog('Migration complete');
-        }
-      }
-
-      // STEP 3c: Auto-create default business if none exist (inside transaction lock)
-      let created = false;
-      if (businesses.length === 0) {
-        debugLog('No businesses found - auto-creating default business...');
-        
-        const insertResult = await tx`
-          INSERT INTO businesses (owner_id, auth_user_id, name, timezone, is_subscribed, created_at)
-          VALUES (NULL, ${userId}, ${'Můj nový salon'}, ${clientTimezone}, false, NOW())
-          RETURNING id, name, auth_user_id, timezone, phone, vapi_phone, is_subscribed, created_at
-        `;
-        
-        if (insertResult.length > 0) {
-          created = true;
-          businesses = insertResult;
-          debugLog('Created default business:', insertResult[0].id);
-        }
-      }
-
-      return { businesses, created };
-    });
+    debugLog('Ensuring default business for userId:', userId, { clientTimezone });
+    const result = await ensureDefaultBusinessForUser(userId, clientTimezone);
 
     // STEP 3d: Map and return businesses
     debugLog('Mapping businesses for response...');
-    
     const mappedBusinesses = result.businesses.map((b) => mapBusiness(b, clientTimezone));
 
     debugLog('Response ready:', {
@@ -230,12 +141,12 @@ export async function GET(request) {
       firstBusinessIsSubscribed: mappedBusinesses[0]?.isSubscribed ?? null,
     });
 
-    return Response.json({
+    return noStoreResponse({
       ok: true,
       businesses: mappedBusinesses,
       userId,
       created: result.created,
-    });
+    }, 200);
 
   } catch (dbError) {
     // ========== DB ERROR HANDLING ==========
@@ -245,7 +156,7 @@ export async function GET(request) {
       stack: dbError.stack,
     });
 
-    return Response.json({
+    return noStoreResponse({
       ok: false,
       error: 'internal_server_error',
       businesses: [],
@@ -256,7 +167,7 @@ export async function GET(request) {
           stack: dbError.stack,
         }
       } : {}),
-    }, { status: 500 });
+    }, 500);
   }
 }
 
@@ -266,12 +177,12 @@ export async function POST(request) {
   if (missingEnvVars.length > 0) {
     const errorMsg = `Missing required env vars: ${missingEnvVars.join(', ')}`;
     console.error('[api/businesses] POST ENV_ERROR:', errorMsg);
-    return Response.json({
+    return noStoreResponse({
       ok: false,
       error: 'server_misconfigured',
       message: errorMsg,
       userId: null,
-    }, { status: 500 });
+    }, 500);
   }
 
   // ========== Resolve session/userId ==========
@@ -287,7 +198,7 @@ export async function POST(request) {
   }
 
   if (!userId) {
-    return Response.json({ ok: false, error: 'unauthorized', userId: null }, { status: 401 });
+    return noStoreResponse({ ok: false, error: 'unauthorized', userId: null }, 401);
   }
 
   // ========== Parse body ==========
@@ -313,11 +224,11 @@ export async function POST(request) {
     
     const count = parseInt(existingCount[0]?.count || '0', 10);
     if (count >= 5) {
-      return Response.json({ 
+      return noStoreResponse({ 
         ok: false, 
         error: 'max_businesses_reached',
         userId 
-      }, { status: 400 });
+      }, 400);
     }
 
     // Create new business
@@ -332,7 +243,7 @@ export async function POST(request) {
 
     debugLog('POST: Created business:', { businessId: newBusiness.id, name: newBusiness.name });
 
-    return Response.json({
+    return noStoreResponse({
       ok: true,
       userId,
       business: {
@@ -344,7 +255,7 @@ export async function POST(request) {
         vapiPhone: newBusiness.vapi_phone,
         isSubscribed: newBusiness.is_subscribed === true,
       },
-    });
+    }, 200);
   } catch (dbError) {
     console.error('[api/businesses] POST DB_ERROR:', {
       userId,
@@ -352,7 +263,7 @@ export async function POST(request) {
       stack: dbError.stack,
     });
 
-    return Response.json({
+    return noStoreResponse({
       ok: false,
       error: 'internal_server_error',
       userId,
@@ -362,6 +273,6 @@ export async function POST(request) {
           stack: dbError.stack,
         }
       } : {}),
-    }, { status: 500 });
+    }, 500);
   }
 }

@@ -43,3 +43,4 @@ fs.writeFileSync(indexJsPath, indexContent);
 
 console.log('[postinstall] Created @auth/create alias in node_modules');
 
+

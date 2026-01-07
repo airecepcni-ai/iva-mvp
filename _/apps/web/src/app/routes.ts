@@ -131,6 +131,10 @@ const businessesRoute = route('api/businesses', './api-businesses.ts');
 const subscriptionRoute = route('api/subscription', './api-subscription.ts');
 const debugWhoamiRoute = route('api/debug/whoami', './api-debug-whoami.ts');
 const debugBootstrapRoute = route('api/debug/bootstrap', './api-debug-bootstrap.ts');
+const debugSubscriptionSnapshotRoute = route(
+  'api/debug/subscription-snapshot',
+  './api-debug-subscription-snapshot.ts'
+);
 
 const routes = [
   authRoute,
@@ -140,6 +144,7 @@ const routes = [
   subscriptionRoute,
   debugWhoamiRoute,
   debugBootstrapRoute,
+  debugSubscriptionSnapshotRoute,
   ...generateRoutes(tree),
   notFound,
 ];

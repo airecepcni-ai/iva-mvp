@@ -8,12 +8,18 @@
  */
 import sql from "../utils/sql.js";
 import { getSessionFromRequest } from "../../../auth.js";
+import { computeIsSubscribed } from "../utils/subscription.js";
 
 // Debug logging helper - only logs when DEBUG_SUBSCRIPTION=true
 function debugLog(...args) {
   if (process.env.DEBUG_SUBSCRIPTION === 'true') {
     console.log('[api/subscription]', ...args);
   }
+}
+
+const NO_STORE_HEADERS = { 'Cache-Control': 'no-store' };
+function noStoreResponse(body, status = 200) {
+  return Response.json(body, { status, headers: NO_STORE_HEADERS });
 }
 
 /**
@@ -63,17 +69,16 @@ export async function GET(request) {
     // If userId is null/undefined, return 401 (NOT 500)
     if (!userId) {
       debugLog('No userId - returning 401 unauthorized');
-      return Response.json({ 
+      return noStoreResponse({ 
         ok: false, 
         error: "unauthorized",
-        // Include debug info when DEBUG_SUBSCRIPTION=true
         ...(process.env.DEBUG_SUBSCRIPTION === 'true' ? {
           _debug: {
             ...authDebug,
             sessionError: sessionError?.message || null,
           }
         } : {})
-      }, { status: 401 });
+      }, 401);
     }
 
     // If businessId is provided, check ownership and return subscription for that specific business
@@ -97,10 +102,10 @@ export async function GET(request) {
 
       if (businessRows.length === 0) {
         debugLog('Business not found:', businessId);
-        return Response.json({ 
+        return noStoreResponse({ 
           ok: false, 
           error: "business_not_found" 
-        }, { status: 404 });
+        }, 404);
       }
 
       const business = businessRows[0];
@@ -109,27 +114,27 @@ export async function GET(request) {
       // Check ownership
       if (businessOwner !== userId) {
         debugLog('Ownership check failed - business owner:', businessOwner, 'session user:', userId);
-        return Response.json({ 
+        return noStoreResponse({ 
           ok: false, 
           error: "forbidden",
           message: "You do not own this business"
-        }, { status: 403 });
+        }, 403);
       }
 
-      const isSubscribed = business.is_subscribed === true;
+      const computedIsSubscribed = computeIsSubscribed(business);
       
       debugLog('Business subscription check:', {
         businessId: business.id,
         businessName: business.name,
-        isSubscribed,
+        isSubscribed: computedIsSubscribed,
       });
 
-      return Response.json({
+      return noStoreResponse({
         ok: true,
         userId,
         businessId: business.id,
         businessName: business.name,
-        isSubscribed,
+        isSubscribed: computedIsSubscribed,
         stripeCustomerId: business.stripe_customer_id || null,
         stripeSubscriptionId: business.stripe_subscription_id || null,
         stripePriceId: business.stripe_price_id || null,
@@ -139,16 +144,19 @@ export async function GET(request) {
     // No businessId provided - return subscription status across all user's businesses
     // Get all businesses for this user
     let businesses = await sql`
-      SELECT 
-        id,
-        name,
-        is_subscribed,
-        stripe_customer_id,
-        stripe_subscription_id,
-        stripe_price_id
-      FROM businesses
-      WHERE auth_user_id = ${userId}
-      ORDER BY created_at ASC
+        SELECT 
+          id,
+          name,
+          is_subscribed,
+          stripe_customer_id,
+          stripe_subscription_id,
+          stripe_price_id,
+          stripe_status,
+          stripe_subscription_status,
+          stripe_current_period_end
+        FROM businesses
+        WHERE auth_user_id = ${userId}
+        ORDER BY created_at ASC
     `;
 
     // Also check legacy owner_id
@@ -160,7 +168,10 @@ export async function GET(request) {
           is_subscribed,
           stripe_customer_id,
           stripe_subscription_id,
-          stripe_price_id
+          stripe_price_id,
+          stripe_status,
+          stripe_subscription_status,
+          stripe_current_period_end
         FROM businesses
         WHERE owner_id = ${userId}
         ORDER BY created_at ASC
@@ -172,10 +183,14 @@ export async function GET(request) {
     const mappedBusinesses = businesses.map((b) => ({
       id: b.id,
       name: b.name,
-      isSubscribed: b.is_subscribed === true,
+      isSubscribed: computeIsSubscribed(b),
+      rawIsSubscribed: b.is_subscribed === true,
       stripeCustomerId: b.stripe_customer_id || null,
       stripeSubscriptionId: b.stripe_subscription_id || null,
       stripePriceId: b.stripe_price_id || null,
+      stripeStatus: b.stripe_status || null,
+      stripeSubscriptionStatus: b.stripe_subscription_status || null,
+      stripeCurrentPeriodEnd: b.stripe_current_period_end || null,
     }));
 
     // User is subscribed if ANY of their businesses has an active subscription
@@ -188,16 +203,12 @@ export async function GET(request) {
       subscribedBusinesses: mappedBusinesses.filter(b => b.isSubscribed).map(b => b.id),
     });
 
-    return Response.json({
+    return noStoreResponse({
       ok: true,
       userId,
       isSubscribed,
-      businesses: mappedBusinesses.map((b) => ({
-        id: b.id,
-        name: b.name,
-        isSubscribed: b.isSubscribed,
-      })),
-    });
+      businesses: mappedBusinesses,
+    }, 200);
   } catch (error) {
     console.error("[api/subscription] DB_ERROR:", {
       userId,
@@ -206,7 +217,7 @@ export async function GET(request) {
       stack: error.stack,
     });
     
-    return Response.json({ 
+    return noStoreResponse({ 
       ok: false, 
       error: "internal_server_error",
       userId,
@@ -216,6 +227,6 @@ export async function GET(request) {
           stack: error.stack,
         }
       } : {}),
-    }, { status: 500 });
+    }, 500);
   }
 }
