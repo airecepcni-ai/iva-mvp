@@ -64,18 +64,10 @@ export async function GET(request) {
     );
   }
 
-  // NOTE: stripe_status column may not exist in all deployments
+  // NOTE: Stripe-related columns vary across deployments.
+  // Use SELECT * to avoid crashing on missing columns like stripe_current_period_end/stripe_status.
   let businesses = await sql`
-    SELECT
-      id,
-      name,
-      auth_user_id,
-      owner_id,
-      is_subscribed,
-      stripe_customer_id,
-      stripe_subscription_id,
-      stripe_price_id,
-      stripe_current_period_end
+    SELECT *
     FROM businesses
     WHERE auth_user_id = ${userId}
     ORDER BY created_at ASC
@@ -83,16 +75,7 @@ export async function GET(request) {
 
   if (!businesses || businesses.length === 0) {
     businesses = await sql`
-      SELECT
-        id,
-        name,
-        auth_user_id,
-        owner_id,
-        is_subscribed,
-        stripe_customer_id,
-        stripe_subscription_id,
-        stripe_price_id,
-        stripe_current_period_end
+      SELECT *
       FROM businesses
       WHERE owner_id = ${userId}
       ORDER BY created_at ASC

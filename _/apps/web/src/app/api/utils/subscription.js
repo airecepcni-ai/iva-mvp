@@ -76,16 +76,10 @@ export async function getSubscriptionInfo(authUserId) {
   }
 
   try {
-    // NOTE: stripe_status column may not exist in all deployments
+    // NOTE: Stripe-related columns vary across deployments.
+    // Use SELECT * to avoid crashing on missing columns like stripe_current_period_end/stripe_status.
     const rows = await sql`
-      SELECT
-        id,
-        name,
-        is_subscribed,
-        stripe_customer_id,
-        stripe_subscription_id,
-        stripe_price_id,
-        stripe_current_period_end
+      SELECT *
       FROM public.businesses
       WHERE auth_user_id = ${authUserId}
       ORDER BY created_at ASC
@@ -144,18 +138,10 @@ export async function getSubscriptionInfoByBusinessId(businessId) {
   }
 
   try {
-    // NOTE: stripe_status column may not exist in all deployments
+    // NOTE: Stripe-related columns vary across deployments.
+    // Use SELECT * to avoid crashing on missing columns like stripe_current_period_end/stripe_status.
     const businessRows = await sql`
-      SELECT
-        id,
-        name,
-        auth_user_id,
-        owner_id,
-        is_subscribed,
-        stripe_customer_id,
-        stripe_subscription_id,
-        stripe_price_id,
-        stripe_current_period_end
+      SELECT *
       FROM public.businesses
       WHERE id = ${businessId}
       LIMIT 1
