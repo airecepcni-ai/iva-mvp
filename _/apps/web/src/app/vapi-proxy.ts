@@ -48,12 +48,12 @@ async function proxy(request: Request): Promise<Response> {
   const headers = new Headers(request.headers);
   // Avoid leaking the edge host to the backend.
   headers.delete('host');
-  // Don't set content-length manually (streaming request). We keep the original
-  // Content-Length from the incoming request if it exists.
+  // We'll handle Content-Length based on how we forward the body (stream vs buffer).
 
   const method = request.method.toUpperCase();
   const isBodyAllowed = method !== 'GET' && method !== 'HEAD';
-  const hasBody = Boolean(request.headers.get('content-length')) || request.body != null;
+  const incomingContentLength = request.headers.get('content-length');
+  const hasBody = Boolean(incomingContentLength) || request.body != null;
 
   const isDev = process.env.NODE_ENV !== 'production';
   if (isDev) {
@@ -66,11 +66,25 @@ async function proxy(request: Request): Promise<Response> {
     redirect: 'manual',
   };
 
-  // Forward the raw request stream (do not read/parse the body here).
-  if (isBodyAllowed && request.body != null) {
-    init.body = request.body;
-    // Required by Node's fetch (undici) when streaming a request body.
-    init.duplex = 'half';
+  // Forward body:
+  // - Prefer streaming the raw request body when available.
+  // - If the runtime provides a Request without a body stream (request.body === null)
+  //   but headers indicate a body, fall back to buffering raw bytes and forwarding them.
+  if (isBodyAllowed && hasBody) {
+    if (request.body != null) {
+      // Streaming: do NOT forward content-length; let fetch compute framing.
+      headers.delete('content-length');
+      init.body = request.body;
+      // Required by Node's fetch (undici) when streaming a request body.
+      init.duplex = 'half';
+      if (isDev) console.log('[vapi-proxy] body mode=stream');
+    } else {
+      // Fallback: forward raw bytes (still not parsing JSON/text).
+      const bytes = await request.arrayBuffer();
+      headers.set('content-length', String(bytes.byteLength));
+      init.body = bytes;
+      if (isDev) console.log(`[vapi-proxy] body mode=buffer bytes=${bytes.byteLength}`);
+    }
   }
 
   const upstream = await fetch(targetUrl, init);
