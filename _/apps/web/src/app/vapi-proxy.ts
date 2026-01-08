@@ -48,8 +48,8 @@ async function proxy(request: Request): Promise<Response> {
   const headers = new Headers(request.headers);
   // Avoid leaking the edge host to the backend.
   headers.delete('host');
-  // Don't set content-length manually (streaming request).
-  headers.delete('content-length');
+  // Don't set content-length manually (streaming request). We keep the original
+  // Content-Length from the incoming request if it exists.
 
   const method = request.method.toUpperCase();
   const isBodyAllowed = method !== 'GET' && method !== 'HEAD';
