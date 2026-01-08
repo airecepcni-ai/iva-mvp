@@ -60,31 +60,19 @@ async function proxy(request: Request): Promise<Response> {
     console.log(`[vapi-proxy] ${method} ${url.pathname}${url.search} hasBody=${isBodyAllowed && hasBody}`);
   }
 
-  const init: RequestInit & { duplex?: 'half' } = {
+  const init: RequestInit = {
     method,
     headers,
     redirect: 'manual',
   };
 
-  // Forward body:
-  // - Prefer streaming the raw request body when available.
-  // - If the runtime provides a Request without a body stream (request.body === null)
-  //   but headers indicate a body, fall back to buffering raw bytes and forwarding them.
+  // Forward raw bytes (no JSON/text parsing).
+  // In practice this is the most reliable way to preserve request bodies through Vercel->Railway.
   if (isBodyAllowed && hasBody) {
-    if (request.body != null) {
-      // Streaming: do NOT forward content-length; let fetch compute framing.
-      headers.delete('content-length');
-      init.body = request.body;
-      // Required by Node's fetch (undici) when streaming a request body.
-      init.duplex = 'half';
-      if (isDev) console.log('[vapi-proxy] body mode=stream');
-    } else {
-      // Fallback: forward raw bytes (still not parsing JSON/text).
-      const bytes = await request.arrayBuffer();
-      headers.set('content-length', String(bytes.byteLength));
-      init.body = bytes;
-      if (isDev) console.log(`[vapi-proxy] body mode=buffer bytes=${bytes.byteLength}`);
-    }
+    const bytes = await request.arrayBuffer();
+    headers.set('content-length', String(bytes.byteLength));
+    init.body = bytes;
+    if (isDev) console.log(`[vapi-proxy] body mode=buffer bytes=${bytes.byteLength}`);
   }
 
   const upstream = await fetch(targetUrl, init);
