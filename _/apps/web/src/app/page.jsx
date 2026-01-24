@@ -14,7 +14,7 @@ import { Footer } from "@/components/Footer/Footer";
 import { AnimationStyles } from "@/components/AnimationStyles/AnimationStyles";
 
 // V2 imports
-import LandingV2 from "./LandingV2";
+import LandingHVAC from "./landing/LandingHVAC";
 
 // V1 Landing Page Component
 function LandingPageV1() {
@@ -32,8 +32,5 @@ function LandingPageV1() {
 }
 
 export default function LandingPage() {
-  if (isV2) {
-    return <LandingV2 />;
-  }
-  return <LandingPageV1 />;
+  return isV2 ? <LandingHVAC /> : <LandingPageV1 />;
 }
