@@ -22,8 +22,15 @@
 - Ensure `STRIPE_WEBHOOK_SECRET` is set in Vercel and Stripe sends signatures to verify raw bodies.
 
 ## Database migrations
-- Apply `apps/web/sql/2026-01-02_stripe_events_table.sql` before connecting the webhook in production.
+- Apply SQL files in `apps/web/sql/` directly via `psql`.
+- New dashboard migrations:
+  - `apps/web/sql/001_create_view_daily_activity_summary.sql`
+  - `apps/web/sql/002_create_table_alerts.sql`
+- Stripe webhook migration:
+  - `apps/web/sql/2026-01-02_stripe_events_table.sql` (required before connecting the webhook in production)
   ```
+  psql "$DATABASE_URL" -f apps/web/sql/001_create_view_daily_activity_summary.sql
+  psql "$DATABASE_URL" -f apps/web/sql/002_create_table_alerts.sql
   psql "$DATABASE_URL" -f apps/web/sql/2026-01-02_stripe_events_table.sql
   ```
 
@@ -31,4 +38,11 @@
 - Run `npm run build` from `apps/web`.
 - Run `npm run start` (locally) and visit `/`, `/account/signin`, `/dashboard`.
 - Trigger each tier’s “Vybrat tarif” button and confirm `/api/stripe/checkout` receives the correct `priceId`.
+
+## Manual test checklist
+- `/dashboard` renders V2 when `NEXT_PUBLIC_UI_VERSION=v2` (and still works with `VITE_UI_VERSION=v2`).
+- `/api/dashboard/chart` returns `view_missing` vs `no_activity` error branches correctly.
+- `/api/alerts` returns empty state for missing table or no alerts.
+- `POST /api/alerts/:id/status` enforces tenant scoping (cannot update another tenant’s alert).
+- Server build doesn’t hang due to DB client init at module import-time (DB client creation stays lazy).
 

@@ -5,6 +5,10 @@ import { Calendar, Users, TrendingUp, Phone, AlertCircle } from "lucide-react";
 import { fetchBookings } from "../../lib/backend";
 import { fetchServices } from "../../lib/services";
 import { useTenant } from "@/lib/TenantContext";
+import DashboardV2 from "./DashboardV2";
+
+const uiVersion = import.meta.env.NEXT_PUBLIC_UI_VERSION ?? import.meta.env.VITE_UI_VERSION;
+const isV2 = uiVersion === "v2";
 
 // Helper function to get today's date in YYYY-MM-DD format
 function today() {
@@ -49,7 +53,7 @@ function NoBusinesBanner() {
   );
 }
 
-export default function DashboardPage() {
+function DashboardV1() {
   // Get tenant context - hasBusiness indicates if user has any business
   const { activeBusinessId, loading: tenantLoading, hasBusiness } = useTenant();
   const [todayCount, setTodayCount] = useState(0);
@@ -290,4 +294,12 @@ export default function DashboardPage() {
       </div>
     </div>
   );
+}
+
+export default function DashboardPage() {
+  if (isV2) {
+    return <DashboardV2 />;
+  }
+
+  return <DashboardV1 />;
 }
