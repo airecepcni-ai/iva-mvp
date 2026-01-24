@@ -1,8 +1,8 @@
 "use client";
 
-// Feature flag to toggle between V1 and V2 landing page
-// Set to true to use the new LandingV2 design
-const USE_LANDING_V2 = true;
+// Feature flag to toggle between V1 and V2 landing page.
+const uiVersion = import.meta.env.NEXT_PUBLIC_UI_VERSION ?? import.meta.env.VITE_UI_VERSION;
+const isV2 = uiVersion === "v2";
 
 // V1 imports
 import { Header } from "@/components/Header/Header";
@@ -32,7 +32,7 @@ function LandingPageV1() {
 }
 
 export default function LandingPage() {
-  if (USE_LANDING_V2) {
+  if (isV2) {
     return <LandingV2 />;
   }
   return <LandingPageV1 />;
