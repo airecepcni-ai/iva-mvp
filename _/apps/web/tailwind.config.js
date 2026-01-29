@@ -1,10 +1,22 @@
 module.exports = {
+	darkMode: 'class',
 	content: ['./src/**/*.{js,ts,jsx,tsx}'],
 	theme: {
 		fontFamily: {
 			sans: ['Inter', 'sans-serif'],
+			display: ['Manrope', 'sans-serif'],
 		},
 		extend: {
+			colors: {
+				primary: '#136dec',
+				'primary-hover': '#115dc7',
+				'background-light': '#f6f7f8',
+				'background-dark': '#101822',
+				'card-dark': '#192433',
+				'border-dark': '#233348',
+				'text-muted': '#92a9c9',
+				'accent-orange': '#f59e0b',
+			},
 			fontFamily: {
 				'a-bee-zee': 'A Bee Zee',
 				'ad-la-m-display': 'Ad La M Display',

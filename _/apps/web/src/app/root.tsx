@@ -455,17 +455,21 @@ export function Layout({ children }: { children: ReactNode }) {
     }
   }, [pathname]);
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&display=swap" rel="stylesheet" />
+        <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
         <script type="module" src="/src/__create/dev-error-overlay.js"></script>
         <link rel="icon" href="/src/__create/favicon.png" />
         {LoadFontsSSR ? <LoadFontsSSR /> : null}
       </head>
-      <body>
+      <body className="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display antialiased">
         <ClientOnly loader={() => <SessionProvider>{children}</SessionProvider>} />
         <HotReloadIndicator />
         <Toaster position="bottom-right" />
