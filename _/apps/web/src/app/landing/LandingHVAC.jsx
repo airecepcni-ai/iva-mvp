@@ -92,7 +92,7 @@ export default function LandingHVAC() {
             {/* CTA */}
             <div>
               <button
-                onClick={() => scrollToSection("hero-form")}
+                onClick={() => scrollToSection("final-cta")}
                 className="bg-primary hover:bg-primary-hover text-white text-sm font-bold px-5 py-2.5 rounded-lg transition-colors shadow-lg shadow-primary/20"
               >
                 Get Early Access
@@ -535,7 +535,7 @@ export default function LandingHVAC() {
         </section>
 
         {/* Final CTA */}
-        <section className="py-24 relative overflow-hidden">
+        <section id="final-cta" className="py-24 relative overflow-hidden">
           <div className="absolute inset-0 bg-primary/10 dark:bg-primary/5"></div>
           {/* Decorative circle */}
           <div className="absolute -top-24 -right-24 w-96 h-96 bg-primary/20 rounded-full blur-3xl"></div>

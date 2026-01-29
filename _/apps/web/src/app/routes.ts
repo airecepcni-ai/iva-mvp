@@ -114,7 +114,8 @@ if (import.meta.env.DEV) {
 	}
 }
 const tree = buildRouteTree(__dirname);
-const notFound = route(':splat*', './__create/not-found.tsx');
+// React Router warning fix: `*` must follow a `/` (":splat/*" not ":splat*")
+const notFound = route(':splat/*', './__create/not-found.tsx');
 
 // Auth.js resource route - handles /api/auth/* on Vercel
 // (Hono only runs locally, Vercel needs this explicit route)
@@ -140,6 +141,9 @@ const debugSubscriptionSnapshotRoute = route(
 const vapiRoute = route('vapi/*', './vapi-proxy.ts', { id: 'vapi-proxy' });
 const apiVapiRoute = route('api/vapi/*', './vapi-proxy.ts', { id: 'api-vapi-proxy' });
 
+// Waitlist route for Vercel deployment
+const waitlistRoute = route('api/waitlist', './api-waitlist.ts');
+
 const routes = [
   authRoute,
   debugAuthRoute,
@@ -151,6 +155,7 @@ const routes = [
   debugSubscriptionSnapshotRoute,
   vapiRoute,
   apiVapiRoute,
+  waitlistRoute,
   ...generateRoutes(tree),
   notFound,
 ];
