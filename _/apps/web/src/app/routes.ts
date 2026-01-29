@@ -141,8 +141,9 @@ const debugSubscriptionSnapshotRoute = route(
 const vapiRoute = route('vapi/*', './vapi-proxy.ts', { id: 'vapi-proxy' });
 const apiVapiRoute = route('api/vapi/*', './vapi-proxy.ts', { id: 'api-vapi-proxy' });
 
-// Waitlist route for Vercel deployment
+// Waitlist routes for Vercel deployment
 const waitlistRoute = route('api/waitlist', './api-waitlist.ts');
+const setupWaitlistRoute = route('api/setup-waitlist', './api-setup-waitlist.ts');
 
 const routes = [
   authRoute,
@@ -156,6 +157,7 @@ const routes = [
   vapiRoute,
   apiVapiRoute,
   waitlistRoute,
+  setupWaitlistRoute,
   ...generateRoutes(tree),
   notFound,
 ];
